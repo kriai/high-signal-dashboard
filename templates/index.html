@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Signal News Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .signal-high { border-left: 4px solid #10b981; }
+        .signal-medium { border-left: 4px solid #f59e0b; }
+        .signal-low { border-left: 4px solid #ef4444; }
+        .article-card:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        .badge-high { background: #10b981; color: white; }
+        .badge-medium { background: #f59e0b; color: white; }
+        .badge-low { background: #ef4444; color: white; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-4xl font-bold text-gray-800">🎯 High-Signal News</h1>
+                <p class="text-gray-500">27 curated sources • Signal-scored • Updated every 30 min</p>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="filterHighSignal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition">
+                    🌟 High Signal Only
+                </button>
+                <button onclick="refreshData()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition">
+                    🔄 Refresh
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                <p class="text-gray-500 text-xs uppercase font-semibold">Total Articles</p>
+                <p class="text-2xl font-bold" id="totalCount">0</p>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                <p class="text-gray-500 text-xs uppercase font-semibold">Sources</p>
+                <p class="text-2xl font-bold" id="sourceCount">0</p>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                <p class="text-gray-500 text-xs uppercase font-semibold">High Signal</p>
+                <p class="text-2xl font-bold text-green-600" id="highSignalCount">0</p>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                <p class="text-gray-500 text-xs uppercase font-semibold">Avg Score</p>
+                <p class="text-2xl font-bold text-blue-600" id="avgScore">0</p>
+            </div>
+            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
+                <p class="text-gray-500 text-xs uppercase font-semibold">Last Update</p>
+                <p class="text-sm font-medium" id="lastUpdated">Just now</p>
+            </div>
+        </div>
+
+        <div id="articlesContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        </div>
+    </div>
+
+    <script>
+        let showHighSignalOnly = false;
+        
+        async function loadArticles() {
+            const container = document.getElementById('articlesContainer');
+            container.innerHTML = '<div class="col-span-full text-center py-12 text-gray-500">Loading...</div>';
+            
+            const url = showHighSignalOnly ? '/api/high_signal' : '/api/articles?limit=50';
+            
+            try {
+                const response = await fetch(url);
+                const articles = await response.json();
+                
+                document.getElementById('totalCount').textContent = articles.length;
+                
+                const sources = await fetch('/api/sources').then(r => r.json());
+                document.getElementById('sourceCount').textContent = sources.length;
+                
+                const stats = await fetch('/api/stats').then(r => r.json());
+                document.getElementById('highSignalCount').textContent = stats.high_signal_count || 0;
+                
+                if (articles.length > 0) {
+                    const avgScore = articles.reduce((sum, a) => sum + (a.signal_score || 0), 0) / articles.length;
+                    document.getElementById('avgScore').textContent = Math.round(avgScore);
+                }
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+                
+                if (articles.length === 0) {
+                    container.innerHTML = '<div class="col-span-full text-center py-12 text-gray-500">No high-signal articles found. Try refreshing.</div>';
+                    return;
+                }
+                
+                container.innerHTML = articles.map(article => {
+                    const score = article.signal_score || 50;
+                    const signalClass = score >= 80 ? 'signal-high' : (score >= 65 ? 'signal-medium' : 'signal-low');
+                    const badgeClass = score >= 80 ? 'badge-high' : (score >= 65 ? 'badge-medium' : 'badge-low');
+                    
+                    return `
+                        <div class="article-card bg-white rounded-lg shadow-sm hover:shadow-md p-4 border border-gray-100 ${signalClass}">
+                            <div class="flex justify-between items-start mb-2">
+                                <span class="text-xs font-medium px-2 py-1 rounded ${badgeClass}">
+                                    ${score}%
+                                </span>
+                                <span class="text-xs text-gray-400">${article.source || 'Unknown'}</span>
+                            </div>
+                            
+                            <a href="${article.link}" target="_blank" class="block">
+                                <h3 class="font-semibold text-gray-800 hover:text-blue-600 transition text-base">
+                                    ${article.title}
+                                </h3>
+                            </a>
+                            
+                            ${article.summary ? `
+                                <div class="text-sm text-gray-500 mt-2 bg-gray-50 p-2 rounded">
+                                    ${article.summary}
+                                </div>
+                            ` : ''}
+                            
+                            <div class="mt-3 flex justify-between items-center text-xs text-gray-400">
+                                <span>${article.type === 'dynamic' ? '🔄' : '📄'}</span>
+                                <a href="${article.link}" target="_blank" class="text-blue-500 hover:underline">
+                                    Read →
+                                </a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+            } catch (error) {
+                console.error(error);
+                container.innerHTML = '<div class="col-span-full text-center py-12 text-red-500">Error loading articles</div>';
+            }
+        }
+        
+        function filterHighSignal() {
+            showHighSignalOnly = !showHighSignalOnly;
+            document.querySelector('button:first-child').textContent = 
+                showHighSignalOnly ? '📊 Show All' : '🌟 High Signal Only';
+            loadArticles();
+        }
+        
+        async function refreshData() {
+            const btn = document.querySelector('button:last-child');
+            btn.textContent = '⏳ Loading...';
+            btn.disabled = true;
+            
+            try {
+                await fetch('/api/refresh', { method: 'POST' });
+                await loadArticles();
+            } catch (error) {
+                alert('Error refreshing');
+            } finally {
+                btn.textContent = '🔄 Refresh';
+                btn.disabled = false;
+            }
+        }
+        
+        setInterval(loadArticles, 60000);
+        loadArticles();
+    </script>
+</body>
+</html>
