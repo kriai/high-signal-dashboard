@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+.context
+.gstack
+.DS_Store
+
+# Scrape state lives in the Blob store once deployed; a stale local copy would
+# only bloat the bundle.
+cache.json
+health.json
+*.tmp

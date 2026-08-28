@@ -1,163 +1,420 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-Signal News Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .signal-high { border-left: 4px solid #10b981; }
-        .signal-medium { border-left: 4px solid #f59e0b; }
-        .signal-low { border-left: 4px solid #ef4444; }
-        .article-card:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-        .badge-high { background: #10b981; color: white; }
-        .badge-medium { background: #f59e0b; color: white; }
-        .badge-low { background: #ef4444; color: white; }
-    </style>
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="AI and tech headlines from 27 sources, ranked by an explainable signal score.">
+    <title>High Signal — AI news, ranked</title>
+
+    <!-- Resolve the theme before first paint so dark mode never flashes white.
+         'system' is a stored value in its own right, not the absence of one. -->
+    <script>
+        (function () {
+            var stored = null;
+            try { stored = localStorage.getItem('hs.theme'); } catch (e) {}
+            var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            document.documentElement.dataset.themePref = stored || 'system';
+            document.documentElement.dataset.theme =
+                (stored === 'light' || stored === 'dark')
+                    ? stored
+                    : (prefersDark ? 'dark' : 'light');
+        })();
+    </script>
+
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <link rel="alternate" type="application/rss+xml" title="High Signal" href="/feed.xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/park.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
-<body class="bg-gray-50">
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <div class="flex justify-between items-center mb-8">
-            <div>
-                <h1 class="text-4xl font-bold text-gray-800">🎯 High-Signal News</h1>
-                <p class="text-gray-500">27 curated sources • Signal-scored • Updated every 30 min</p>
+<body>
+    <a class="skip" href="#grid">Skip to headlines</a>
+
+    <!-- Icon sprite: Lucide glyphs, the set Park UI documents its components with. -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <defs>
+            <g id="i-signal" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/>
+            </g>
+            <g id="i-search" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+            </g>
+            <g id="i-refresh" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                <path d="M21 3v5h-5"/>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                <path d="M3 21v-5h5"/>
+            </g>
+            <g id="i-sun" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4"/>
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            </g>
+            <g id="i-moon" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
+            </g>
+            <g id="i-system" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8M12 17v4"/>
+            </g>
+            <g id="i-arrow" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M7 17 17 7M7 7h10v10"/>
+            </g>
+            <g id="i-inbox" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 12h-6l-2 3h-4l-2-3H2"/>
+                <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+            </g>
+            <g id="i-check" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>
+            </g>
+            <g id="i-alert" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+            </g>
+            <g id="i-bookmark" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </g>
+            <g id="i-bookmark-on" fill="currentColor" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </g>
+            <g id="i-x" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 6 6 18M6 6l12 12"/>
+            </g>
+            <g id="i-help" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>
+            </g>
+            <g id="i-sliders" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 7h-9M14 17H5"/>
+                <circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>
+            </g>
+            <g id="i-clock" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+            </g>
+            <g id="i-chevron" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m6 9 6 6 6-6"/>
+            </g>
+            <g id="i-plus" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M5 12h14M12 5v14"/>
+            </g>
+            <g id="i-trash" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                <path d="M10 6V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2"/>
+            </g>
+            <g id="i-play" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m5 3 14 9-14 9V3z"/>
+            </g>
+            <g id="i-download" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </g>
+            <g id="i-rss" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/>
+                <circle cx="5" cy="19" r="1"/>
+            </g>
+            <g id="i-copy" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect x="8" y="8" width="14" height="14" rx="2"/>
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+            </g>
+            <g id="i-offline" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h.01M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5.2-2.7M19 12.9a10 10 0 0 0-3.3-2.2M2 8.8a15 15 0 0 1 4.2-2.5M22 8.8a15 15 0 0 0-9-2.7M2 2l20 20"/>
+            </g>
+            <g id="i-unread" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <circle cx="12" cy="12" r="3" fill="currentColor"/>
+            </g>
+        </defs>
+    </svg>
+
+    <header class="appbar">
+        <div class="shell appbar__inner">
+            <div class="brand">
+                <span class="brand__mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><use href="#i-signal"/></svg>
+                </span>
+                <span class="brand__text">
+                    <span class="brand__name">High Signal</span>
+                    <span class="brand__meta">
+                        <!-- data-state: live | syncing | stale | offline. The dot
+                             stops claiming "live" the moment polling fails. -->
+                        <span class="pulse" id="statusDot" data-state="syncing" aria-hidden="true"></span>
+                        <span id="lastUpdated">syncing…</span>
+                        <span class="brand__dot" aria-hidden="true">·</span>
+                        <span id="nextSync">—</span>
+                    </span>
+                </span>
             </div>
-            <div class="flex gap-3">
-                <button onclick="filterHighSignal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition">
-                    🌟 High Signal Only
-                </button>
-                <button onclick="refreshData()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition">
-                    🔄 Refresh
-                </button>
+
+            <div class="search">
+                <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+                <input id="search" class="input" type="search" autocomplete="off"
+                       placeholder="Filter headlines…" aria-label="Filter headlines">
+                <kbd class="search__kbd">/</kbd>
             </div>
+
+            <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
+                    title="Some sources are not returning headlines">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
+                <span id="healthCount">0 failing</span>
+            </button>
+
+            <button id="sourcesBtn" class="btn btn--outline btn--icon"
+                    title="Manage sources" aria-label="Manage sources"
+                    aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
+            </button>
+
+            <button id="refreshBtn" class="btn btn--solid btn--icon" title="Re-scrape sources (r)"
+                    aria-label="Re-scrape sources">
+                <svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+            </button>
+
+            <button id="helpBtn" class="btn btn--outline btn--icon" title="Keyboard shortcuts (?)"
+                    aria-label="Keyboard shortcuts" aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24"><use href="#i-help"/></svg>
+            </button>
+
+            <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
+                <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
+            </button>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
-                <p class="text-gray-500 text-xs uppercase font-semibold">Total Articles</p>
-                <p class="text-2xl font-bold" id="totalCount">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
-                <p class="text-gray-500 text-xs uppercase font-semibold">Sources</p>
-                <p class="text-2xl font-bold" id="sourceCount">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
-                <p class="text-gray-500 text-xs uppercase font-semibold">High Signal</p>
-                <p class="text-2xl font-bold text-green-600" id="highSignalCount">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
-                <p class="text-gray-500 text-xs uppercase font-semibold">Avg Score</p>
-                <p class="text-2xl font-bold text-blue-600" id="avgScore">0</p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow border border-gray-200">
-                <p class="text-gray-500 text-xs uppercase font-semibold">Last Update</p>
-                <p class="text-sm font-medium" id="lastUpdated">Just now</p>
-            </div>
+        <!-- Determinate progress for the background scrape. A full pass takes
+             minutes, so an indeterminate spinner would read as "hung". -->
+        <div class="progress" id="progress" hidden>
+            <div class="progress__bar" id="progressBar"></div>
+            <span class="progress__label" id="progressLabel"></span>
         </div>
+    </header>
 
-        <div id="articlesContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+    <div class="shell">
+        <div class="banner" id="banner" role="status" hidden>
+            <svg class="banner__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-offline"/></svg>
+            <span id="bannerText"></span>
+            <button class="btn btn--ghost btn--sm" id="bannerAction" hidden></button>
         </div>
     </div>
 
-    <script>
-        let showHighSignalOnly = false;
-        
-        async function loadArticles() {
-            const container = document.getElementById('articlesContainer');
-            container.innerHTML = '<div class="col-span-full text-center py-12 text-gray-500">Loading...</div>';
-            
-            const url = showHighSignalOnly ? '/api/high_signal' : '/api/articles?limit=50';
-            
-            try {
-                const response = await fetch(url);
-                const articles = await response.json();
-                
-                document.getElementById('totalCount').textContent = articles.length;
-                
-                const sources = await fetch('/api/sources').then(r => r.json());
-                document.getElementById('sourceCount').textContent = sources.length;
-                
-                const stats = await fetch('/api/stats').then(r => r.json());
-                document.getElementById('highSignalCount').textContent = stats.high_signal_count || 0;
-                
-                if (articles.length > 0) {
-                    const avgScore = articles.reduce((sum, a) => sum + (a.signal_score || 0), 0) / articles.length;
-                    document.getElementById('avgScore').textContent = Math.round(avgScore);
-                }
-                document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
-                
-                if (articles.length === 0) {
-                    container.innerHTML = '<div class="col-span-full text-center py-12 text-gray-500">No high-signal articles found. Try refreshing.</div>';
-                    return;
-                }
-                
-                container.innerHTML = articles.map(article => {
-                    const score = article.signal_score || 50;
-                    const signalClass = score >= 80 ? 'signal-high' : (score >= 65 ? 'signal-medium' : 'signal-low');
-                    const badgeClass = score >= 80 ? 'badge-high' : (score >= 65 ? 'badge-medium' : 'badge-low');
-                    
-                    return `
-                        <div class="article-card bg-white rounded-lg shadow-sm hover:shadow-md p-4 border border-gray-100 ${signalClass}">
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-xs font-medium px-2 py-1 rounded ${badgeClass}">
-                                    ${score}%
-                                </span>
-                                <span class="text-xs text-gray-400">${article.source || 'Unknown'}</span>
-                            </div>
-                            
-                            <a href="${article.link}" target="_blank" class="block">
-                                <h3 class="font-semibold text-gray-800 hover:text-blue-600 transition text-base">
-                                    ${article.title}
-                                </h3>
-                            </a>
-                            
-                            ${article.summary ? `
-                                <div class="text-sm text-gray-500 mt-2 bg-gray-50 p-2 rounded">
-                                    ${article.summary}
-                                </div>
-                            ` : ''}
-                            
-                            <div class="mt-3 flex justify-between items-center text-xs text-gray-400">
-                                <span>${article.type === 'dynamic' ? '🔄' : '📄'}</span>
-                                <a href="${article.link}" target="_blank" class="text-blue-500 hover:underline">
-                                    Read →
-                                </a>
-                            </div>
+    <main class="shell">
+        <div class="toolbar">
+            <p class="toolbar__count" id="resultCount" role="status" aria-live="polite"></p>
+
+            <div class="segment" id="viewSwitch" role="radiogroup" aria-label="Layout">
+                <button class="segment__item" role="radio" aria-checked="true"  data-view="feed">Feed</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-view="sources">Sources</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-view="categories">Categories</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-view="saved">Saved</button>
+            </div>
+
+            <!-- Feed-only: the flat stream is the one view where ordering is a
+                 choice rather than a consequence of the grouping. -->
+            <div class="segment" id="sortSwitch" role="radiogroup" aria-label="Feed order" hidden>
+                <button class="segment__item" role="radio" aria-checked="true"  data-sort="score">Top</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-sort="recent">New</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-sort="mixed">Mixed</button>
+            </div>
+
+            <div class="segment" id="scoreSwitch" role="radiogroup" aria-label="Minimum signal score">
+                <button class="segment__item" role="radio" aria-checked="true"  data-score="0">All</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-score="60">60+</button>
+                <button class="segment__item" role="radio" aria-checked="false" data-score="75">75+</button>
+            </div>
+
+            <button id="unreadBtn" class="btn btn--outline btn--sm" aria-pressed="false"
+                    title="Show unread only (u)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-unread"/></svg>
+                Unread
+            </button>
+
+            <div class="menu">
+                <button id="exportBtn" class="btn btn--outline btn--sm" aria-expanded="false"
+                        aria-haspopup="menu">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+                    Export
+                    <svg class="menu__caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg>
+                </button>
+                <div class="menu__list card" id="exportMenu" role="menu" hidden>
+                    <button class="menu__item" role="menuitem" data-export="copy">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
+                        Copy visible links
+                    </button>
+                    <button class="menu__item" role="menuitem" data-export="markdown">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
+                        Copy as Markdown
+                    </button>
+                    <a class="menu__item" role="menuitem" href="/api/export.json">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+                        Download JSON
+                    </a>
+                    <a class="menu__item" role="menuitem" href="/feed.xml" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rss"/></svg>
+                        RSS feed
+                    </a>
+                </div>
+            </div>
+
+            <button id="markReadBtn" class="btn btn--ghost btn--sm" title="Mark everything visible as read">
+                Mark read
+            </button>
+
+            <button id="clearBtn" class="btn btn--ghost btn--sm" hidden>Clear filters</button>
+        </div>
+
+        <!-- Active filters, each removable. Without this a filter set from a
+             chip or a stat tile is invisible and feels like missing data. -->
+        <div class="filters" id="filters" hidden aria-label="Active filters"></div>
+
+        <!-- Polling never swaps the list under the cursor; new headlines wait
+             behind this. -->
+        <button class="newpill" id="newPill" hidden></button>
+
+        <div class="grid" id="grid" data-view="feed" tabindex="-1"></div>
+    </main>
+
+    <dialog class="dialog dialog--wide" id="sourcesDialog" aria-labelledby="sourcesTitle">
+        <header class="dialog__header">
+            <h2 class="dialog__title" id="sourcesTitle">Sources</h2>
+            <p class="dialog__sub" id="sourcesSummary"></p>
+            <button class="btn btn--ghost btn--icon btn--sm" data-close aria-label="Close">
+                <svg viewBox="0 0 24 24"><use href="#i-x"/></svg>
+            </button>
+        </header>
+
+        <div class="dialog__body">
+            <details class="addsource" id="addSource">
+                <summary class="addsource__summary">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg>
+                    Add a source
+                </summary>
+
+                <form class="addsource__form" id="addSourceForm">
+                    <label class="field">
+                        <span class="field__label">Name</span>
+                        <input class="input" name="name" required maxlength="80"
+                               placeholder="Simon Willison's Weblog">
+                    </label>
+                    <label class="field">
+                        <span class="field__label">URL</span>
+                        <input class="input" name="url" type="url" required
+                               placeholder="https://simonwillison.net/">
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Tier</span>
+                        <select class="input" name="tier">
+                            <option value="high">High — first-party</option>
+                            <option value="medium" selected>Medium — roundup</option>
+                            <option value="low">Low — general press</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span class="field__label">Default category</span>
+                        <select class="input" name="category" id="categorySelect"></select>
+                    </label>
+                    <input type="hidden" name="type" id="sourceType" value="static">
+                    <input type="hidden" name="feed_url" id="sourceFeedUrl">
+
+                    <div class="addsource__actions">
+                        <button type="button" class="btn btn--outline btn--sm" id="discoverSourceBtn">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
+                            Find options
+                        </button>
+                        <button type="button" class="btn btn--outline btn--sm" id="testSourceBtn">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-play"/></svg>
+                            Test selected
+                        </button>
+                        <button type="submit" class="btn btn--solid btn--sm">Add source</button>
+                    </div>
+
+                    <div class="discovery" id="sourceDiscovery" hidden></div>
+
+                    <details class="selectorbox">
+                        <summary class="selectorbox__summary">Advanced selectors</summary>
+                        <div class="selectorbox__grid">
+                            <label class="field">
+                                <span class="field__label">CSS selector</span>
+                                <input class="input" name="selector" id="sourceSelector"
+                                       placeholder="h2 a, h3 a">
+                            </label>
+                            <label class="field">
+                                <span class="field__label">Fallback selector</span>
+                                <input class="input" name="fallback" id="sourceFallback"
+                                       placeholder="article a">
+                            </label>
                         </div>
-                    `;
-                }).join('');
-                
-            } catch (error) {
-                console.error(error);
-                container.innerHTML = '<div class="col-span-full text-center py-12 text-red-500">Error loading articles</div>';
-            }
-        }
-        
-        function filterHighSignal() {
-            showHighSignalOnly = !showHighSignalOnly;
-            document.querySelector('button:first-child').textContent = 
-                showHighSignalOnly ? '📊 Show All' : '🌟 High Signal Only';
-            loadArticles();
-        }
-        
-        async function refreshData() {
-            const btn = document.querySelector('button:last-child');
-            btn.textContent = '⏳ Loading...';
-            btn.disabled = true;
-            
-            try {
-                await fetch('/api/refresh', { method: 'POST' });
-                await loadArticles();
-            } catch (error) {
-                alert('Error refreshing');
-            } finally {
-                btn.textContent = '🔄 Refresh';
-                btn.disabled = false;
-            }
-        }
-        
-        setInterval(loadArticles, 60000);
-        loadArticles();
-    </script>
+                    </details>
+
+                    <!-- The preview is the whole point: a selector is either
+                         right or wrong, and waiting 30 minutes to find out is
+                         not a workflow. -->
+                    <div class="preview" id="testPreview" hidden></div>
+                </form>
+            </details>
+            <div class="sourcelist" id="sourceList"></div>
+
+        </div>
+
+        <footer class="dialog__footer">
+            <span class="dialog__note">Changes are written to <code>sources.json</code>.</span>
+            <button class="btn btn--outline btn--sm" id="refreshFromDialog">Re-scrape now</button>
+        </footer>
+    </dialog>
+
+    <dialog class="dialog" id="helpDialog" aria-labelledby="helpTitle">
+        <header class="dialog__header">
+            <h2 class="dialog__title" id="helpTitle">Keyboard shortcuts</h2>
+            <button class="btn btn--ghost btn--icon btn--sm" data-close aria-label="Close">
+                <svg viewBox="0 0 24 24"><use href="#i-x"/></svg>
+            </button>
+        </header>
+        <div class="dialog__body">
+            <dl class="keys">
+                <div class="keys__row"><dt><kbd>j</kbd> <kbd>k</kbd></dt><dd>Next / previous headline</dd></div>
+                <div class="keys__row"><dt><kbd>o</kbd> <kbd>Enter</kbd></dt><dd>Open in a new tab</dd></div>
+                <div class="keys__row"><dt><kbd>Space</kbd></dt><dd>Expand details and score breakdown</dd></div>
+                <div class="keys__row"><dt><kbd>s</kbd></dt><dd>Save / unsave</dd></div>
+                <div class="keys__row"><dt><kbd>m</kbd></dt><dd>Toggle read / unread</dd></div>
+                <div class="keys__row"><dt><kbd>x</kbd></dt><dd>Hide this headline</dd></div>
+                <div class="keys__row"><dt><kbd>u</kbd></dt><dd>Unread only</dd></div>
+                <div class="keys__row"><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Feed, Sources, Categories, Saved</dd></div>
+                <div class="keys__row"><dt><kbd>/</kbd></dt><dd>Search</dd></div>
+                <div class="keys__row"><dt><kbd>r</kbd></dt><dd>Re-scrape sources</dd></div>
+                <div class="keys__row"><dt><kbd>g</kbd></dt><dd>Manage sources</dd></div>
+                <div class="keys__row"><dt><kbd>?</kbd></dt><dd>This list</dd></div>
+                <div class="keys__row"><dt><kbd>Esc</kbd></dt><dd>Clear search, close panels</dd></div>
+            </dl>
+            <p class="dialog__note dialog__note--block">
+                Scores are rule-based and fully itemised — press <kbd>Space</kbd> on
+                any headline to see exactly where its number came from.
+            </p>
+        </div>
+    </dialog>
+
+    <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

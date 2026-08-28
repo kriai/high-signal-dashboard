@@ -1,0 +1,36 @@
+name: Scrape sources
+
+# Every 30 minutes, which the Vercel side cannot do for free: Hobby cron jobs
+# are capped at one run per day. Actions has no such limit and no 300s ceiling,
+# so this runs the full pass and writes it to the Blob store the app serves
+# from. `workflow_dispatch` makes the same job runnable by hand.
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+# A scrape that overlaps its predecessor would have both writing the same blob.
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches .python-version, so a wheel that resolves here resolves on
+          # Vercel too.
+          python-version: '3.12'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Scrape and publish
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: python scrape_job.py
