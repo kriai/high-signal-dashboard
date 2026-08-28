@@ -4,27 +4,38 @@
       "name": "The Rundown AI",
       "url": "https://www.therundown.ai/",
       "type": "static",
-      "selector": "article h2 a, .post-title a, .blog-post h2 a",
-      "fallback": ".entry-title a"
+      "tier": "medium",
+      "category": "Models & Releases",
+      "enabled": true,
+      "selector": "a[href*=\"/articles/\"] h3",
+      "fallback": "a[href*=\"/articles/\"]"
     },
     {
       "name": "Ben's Bites",
       "url": "https://www.bensbites.com/",
-      "type": "static",
-      "selector": "article h2 a, .post-title a, h2 a",
-      "fallback": ".post-link"
+      "type": "rss",
+      "tier": "medium",
+      "category": "Models & Releases",
+      "enabled": true,
+      "feed_url": "https://www.bensbites.com/feed"
     },
     {
       "name": "AI Breakfast",
-      "url": "https://aibreakfast.com/",
+      "url": "https://aibreakfast.beehiiv.com/",
       "type": "static",
-      "selector": "article h2 a, .entry-title a, h2 a",
-      "fallback": ".post-title a"
+      "tier": "medium",
+      "category": "AI Research",
+      "enabled": true,
+      "selector": "a h3",
+      "fallback": "h3 a, article h2 a"
     },
     {
       "name": "Last Week in AI",
       "url": "https://lastweekin.ai/",
       "type": "static",
+      "tier": "medium",
+      "category": "AI Research",
+      "enabled": true,
       "selector": "article h2 a, .post-title a, h2 a",
       "fallback": ".entry-title a"
     },
@@ -32,41 +43,56 @@
       "name": "Import AI (Jack Clark)",
       "url": "https://jack-clark.net/",
       "type": "static",
+      "tier": "high",
+      "category": "AI Research",
+      "enabled": true,
       "selector": "article h2 a, .entry-title a, h2 a",
       "fallback": ".post-title a"
     },
     {
       "name": "The Algorithm (MIT Tech Review)",
       "url": "https://www.technologyreview.com/topic/artificial-intelligence/",
-      "type": "static",
-      "selector": ".post-item h3 a, .article-teaser h3 a",
-      "fallback": "h3 a"
+      "type": "rss",
+      "tier": "high",
+      "category": "AI Research",
+      "enabled": true,
+      "feed_url": "https://www.technologyreview.com/topic/artificial-intelligence/feed/"
     },
     {
       "name": "Deep Learning Weekly",
       "url": "https://www.deeplearningweekly.com/",
-      "type": "static",
-      "selector": "article h2 a, .post-title a, h2 a",
-      "fallback": ".entry-title a"
+      "type": "rss",
+      "tier": "medium",
+      "category": "AI Research",
+      "enabled": true,
+      "feed_url": "https://www.deeplearningweekly.com/feed"
     },
     {
       "name": "AI Weekly",
       "url": "https://aiweekly.co/",
       "type": "static",
+      "tier": "medium",
+      "category": "AI Research",
+      "enabled": true,
       "selector": "article h2 a, .post-title a, h2 a",
       "fallback": ".entry-title a"
     },
     {
-      "name": "Machine Learning Memes",
-      "url": "https://machinelearningmemes.substack.com/",
-      "type": "static",
-      "selector": ".post-title a, h2 a",
-      "fallback": "article a"
+      "name": "The Machine Learning Engineer",
+      "url": "https://machinelearning.substack.com/",
+      "type": "rss",
+      "tier": "low",
+      "category": "AI Research",
+      "enabled": true,
+      "feed_url": "https://machinelearning.substack.com/feed"
     },
     {
       "name": "State of AI",
       "url": "https://www.stateof.ai/",
       "type": "static",
+      "tier": "high",
+      "category": "AI Research",
+      "enabled": true,
       "selector": "article a, .post-link, h2 a",
       "fallback": ".entry-title a"
     },
@@ -74,6 +100,9 @@
       "name": "Hacker News",
       "url": "https://news.ycombinator.com",
       "type": "static",
+      "tier": "high",
+      "category": "Engineering & Open Source",
+      "enabled": true,
       "selector": ".titleline > a",
       "fallback": "a[href*='item?id=']"
     },
@@ -81,6 +110,9 @@
       "name": "Stratechery",
       "url": "https://stratechery.com/",
       "type": "static",
+      "tier": "high",
+      "category": "Business & Markets",
+      "enabled": true,
       "selector": "article h2 a, .entry-title a, h2 a",
       "fallback": ".post-title a"
     },
@@ -88,6 +120,9 @@
       "name": "Exploding Topics",
       "url": "https://explodingtopics.com/",
       "type": "static",
+      "tier": "medium",
+      "category": "Business & Markets",
+      "enabled": true,
       "selector": ".topic-card a, h3 a",
       "fallback": ".post-title a"
     },
@@ -95,20 +130,30 @@
       "name": "Techmeme",
       "url": "https://www.techmeme.com/",
       "type": "static",
-      "selector": ".clustertitle a, .topictitle a",
-      "fallback": "a[href*='https://']"
+      "tier": "high",
+      "category": "Big Tech",
+      "enabled": true,
+      "selector": ".ii strong a",
+      "fallback": "strong a"
     },
     {
       "name": "Morning Brew",
       "url": "https://www.morningbrew.com/",
       "type": "static",
+      "tier": "low",
+      "category": "Business & Markets",
+      "enabled": false,
       "selector": "article h2 a, .post-title a, h2 a",
-      "fallback": ".entry-title a"
+      "fallback": ".entry-title a",
+      "note": "Cloudflare-blocked (HTTP 403) on both the site and /feed, including via cloudscraper. No public RSS. Disabled until a feed or API is available."
     },
     {
       "name": "The Hustle",
       "url": "https://thehustle.co/",
       "type": "static",
+      "tier": "low",
+      "category": "Business & Markets",
+      "enabled": true,
       "selector": "article h2 a, .post-title a, h2 a",
       "fallback": ".entry-title a"
     },
@@ -116,6 +161,9 @@
       "name": "TLDR Newsletter",
       "url": "https://tldr.tech/",
       "type": "static",
+      "tier": "medium",
+      "category": "Engineering & Open Source",
+      "enabled": true,
       "selector": "article h2 a, .post-title a, h2 a",
       "fallback": ".entry-title a"
     },
@@ -123,41 +171,59 @@
       "name": "The Information",
       "url": "https://www.theinformation.com/",
       "type": "static",
+      "tier": "high",
+      "category": "Big Tech",
+      "enabled": true,
       "selector": "article h2 a, .story-title a, h2 a",
       "fallback": "a[href*='/news/']"
     },
     {
       "name": "Axios Pro Rata",
-      "url": "https://www.axios.com/newsletters/pro-rata",
-      "type": "static",
-      "selector": ".story-item a, article a",
-      "fallback": "h3 a"
+      "url": "https://www.axios.com/newsletters/axios-pro-rata",
+      "type": "rss",
+      "tier": "high",
+      "category": "Funding & M&A",
+      "enabled": true,
+      "feed_url": "https://api.axios.com/feed/",
+      "note": "Axios publishes no Pro Rata-specific feed; this is the site-wide Axios feed, so it carries general news alongside dealmaking."
     },
     {
       "name": "StrictlyVC",
-      "url": "https://www.strictlyvc.com/",
+      "url": "https://strictlyvc.com/",
       "type": "static",
-      "selector": "article h2 a, .post-title a, h2 a",
-      "fallback": ".entry-title a"
+      "tier": "high",
+      "category": "Funding & M&A",
+      "enabled": false,
+      "selector": "article h2 a, h2 a",
+      "note": "Dead source: StrictlyVC was acquired by TechCrunch, the homepage is now an about/links page with no article list, and https://strictlyvc.com/feed/ is a frozen archive whose newest entry is dated November 2019."
     },
     {
       "name": "Term Sheet (Fortune)",
       "url": "https://fortune.com/newsletter/term-sheet/",
-      "type": "static",
-      "selector": ".newsletter-item a, article a",
-      "fallback": "h3 a"
+      "type": "rss",
+      "tier": "high",
+      "category": "Funding & M&A",
+      "enabled": true,
+      "feed_url": "https://fortune.com/feed/",
+      "note": "Fortune publishes no Term Sheet-specific feed; this is the site-wide Fortune feed."
     },
     {
       "name": "The Information Startup",
-      "url": "https://www.theinformation.com/startup",
+      "url": "https://www.theinformation.com/topics/startups",
       "type": "static",
-      "selector": "article h2 a, .story-title a, h2 a",
-      "fallback": "a[href*='/startup/']"
+      "tier": "high",
+      "category": "Funding & M&A",
+      "enabled": true,
+      "selector": "h3 a",
+      "fallback": "a[href*='/articles/']"
     },
     {
       "name": "Y Combinator News",
       "url": "https://news.ycombinator.com/front",
       "type": "static",
+      "tier": "high",
+      "category": "Engineering & Open Source",
+      "enabled": true,
       "selector": ".titleline > a",
       "fallback": "a[href*='item?id=']"
     },
@@ -165,27 +231,40 @@
       "name": "ArXiv AI Papers",
       "url": "https://arxiv.org/list/cs.AI/recent",
       "type": "static",
-      "selector": ".list-title a",
+      "tier": "high",
+      "category": "AI Research",
+      "enabled": true,
+      "lock_category": true,
+      "selector": "dt a[href*='/abs/']",
       "fallback": "a[href*='/abs/']"
     },
     {
       "name": "Product Hunt AI",
       "url": "https://www.producthunt.com/topics/artificial-intelligence",
       "type": "static",
+      "tier": "medium",
+      "category": "AI Tools & Agents",
+      "enabled": false,
       "selector": "a[data-test='post-name']",
-      "fallback": ".post-item a"
+      "fallback": ".post-item a",
+      "note": "Cloudflare-blocked (HTTP 403) including via cloudscraper. The official API needs an OAuth developer token. Disabled until a key is configured."
     },
     {
       "name": "Reddit r/singularity",
-      "url": "https://old.reddit.com/r/singularity/",
-      "type": "static",
-      "selector": "a.title",
-      "fallback": "a[href*='/r/']"
+      "url": "https://www.reddit.com/r/singularity/",
+      "type": "rss",
+      "tier": "medium",
+      "category": "AI Research",
+      "enabled": true,
+      "feed_url": "https://www.reddit.com/r/singularity/.rss"
     },
     {
       "name": "Lobsters AI",
       "url": "https://lobste.rs/t/ai",
       "type": "static",
+      "tier": "medium",
+      "category": "Engineering & Open Source",
+      "enabled": true,
       "selector": "span.link a",
       "fallback": "a[href*='/s/']"
     }

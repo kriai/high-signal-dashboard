@@ -1,0 +1,295 @@
+/* ---------------------------------------------------------------------------
+   Park UI design system (https://park-ui.com), ported to plain CSS.
+
+   Park UI ships as Ark UI + Panda CSS for React/Solid/Vue, which this Flask +
+   Jinja app has no build step for. So the tokens below are lifted verbatim from
+   @park-ui/panda-preset: Radix 12-step colour scales, the bg/fg/border semantic
+   token map, the l1/l2/l3 radius nesting, the shadow scale and the text styles.
+   Component classes follow Park UI's recipes (button, badge, card, input).
+
+   Theme: accent "iris", gray "slate" (Radix's natural pairing), radius "md".
+--------------------------------------------------------------------------- */
+
+/* == Tokens: light ======================================================== */
+:root,
+[data-theme='light'] {
+  --gray-1: #fcfcfd;  --gray-2: #f9f9fb;  --gray-3: #f0f0f3;
+  --gray-4: #e8e8ec;  --gray-5: #e0e1e6;  --gray-6: #d9d9e0;
+  --gray-7: #cdced6;  --gray-8: #b9bbc6;  --gray-9: #8b8d98;
+  --gray-10: #80838d; --gray-11: #60646c; --gray-12: #1c2024;
+  --gray-a2: #00005506; --gray-a3: #0000330f; --gray-a5: #0009321f;
+  --gray-a7: #00062e32; --gray-a9: #00051d74;
+
+  --accent-1: #fdfdff;  --accent-2: #f8f8ff;  --accent-3: #f0f1fe;
+  --accent-4: #e6e7ff;  --accent-6: #cbcdff;  --accent-7: #b8baf8;
+  --accent-9: #5b5bd6;  --accent-10: #5151cd; --accent-11: #5753c6;
+  --accent-a2: #0000ff07; --accent-a3: #0011ee0f; --accent-a7: #0008e647;
+
+  --jade-3: #e6f7ed;  --jade-6: #acdec8;  --jade-9: #29a383;  --jade-11: #208368;
+  --amber-3: #fff7c2; --amber-6: #f3d673; --amber-9: #ffc53d; --amber-11: #ab6400;
+  --red-3: #feebec;   --red-6: #fdbdbe;   --red-9: #e5484d;   --red-11: #ce2c31;
+
+  --bg-canvas: var(--gray-1);
+  --bg-default: #ffffff;
+  --bg-subtle: var(--gray-2);
+  --bg-muted: var(--gray-3);
+  --bg-emphasized: var(--gray-4);
+
+  --shadow-xs: 0 1px 2px var(--gray-a5), 0 0 1px var(--gray-a7);
+  --shadow-sm: 0 2px 4px var(--gray-a3), 0 0 1px var(--gray-a7);
+  --shadow-lg: 0 8px 16px var(--gray-a3), 0 0 1px var(--gray-a7);
+
+  color-scheme: light;
+}
+
+/* == Tokens: dark ========================================================= */
+[data-theme='dark'] {
+  --gray-1: #111113;  --gray-2: #18191b;  --gray-3: #212225;
+  --gray-4: #272a2d;  --gray-5: #2e3135;  --gray-6: #363a3f;
+  --gray-7: #43484e;  --gray-8: #5a6169;  --gray-9: #696e77;
+  --gray-10: #777b84; --gray-11: #b0b4ba; --gray-12: #edeef0;
+  --gray-a2: #d8f4f609; --gray-a3: #ddeaf814; --gray-a5: #d9edfe25;
+  --gray-a7: #d9edff40; --gray-a9: #dfebfd6d;
+
+  --accent-1: #13131e;  --accent-2: #171625;  --accent-3: #202248;
+  --accent-4: #262a65;  --accent-6: #3d3e82;  --accent-7: #4a4a95;
+  --accent-9: #5b5bd6;  --accent-10: #6e6ade; --accent-11: #b1a9ff;
+  --accent-a2: #564bf916; --accent-a3: #525bff3b; --accent-a7: #7777fe8e;
+
+  --jade-3: #0f2e22;  --jade-6: #1b5745;  --jade-9: #29a383;  --jade-11: #1fd8a4;
+  --amber-3: #302008; --amber-6: #5c3d05; --amber-9: #ffc53d; --amber-11: #ffca16;
+  --red-3: #3b1219;   --red-6: #72232d;   --red-9: #e5484d;   --red-11: #ff9592;
+
+  --bg-canvas: var(--gray-1);
+  --bg-default: var(--gray-2);
+  --bg-subtle: var(--gray-3);
+  --bg-muted: var(--gray-4);
+  --bg-emphasized: var(--gray-5);
+
+  --shadow-xs: 0 1px 1px #000000df, 0 0 1px inset var(--gray-a7);
+  --shadow-sm: 0 2px 4px #0000007c, 0 0 1px inset var(--gray-a7);
+  --shadow-lg: 0 8px 16px #0000007c, 0 0 1px inset var(--gray-a7);
+
+  color-scheme: dark;
+}
+
+/* Semantic tokens shared by both themes (they resolve through --gray-*). */
+:root {
+  --fg-default: var(--gray-12);
+  --fg-muted: var(--gray-11);
+  --fg-subtle: var(--gray-10);
+  --border-default: var(--gray-7);
+  --border-muted: var(--gray-6);
+  --border-subtle: var(--gray-4);
+  --border-outline: var(--gray-a9);
+
+  --accent-default: var(--accent-9);
+  --accent-emphasized: var(--accent-10);
+  --accent-fg: #ffffff;
+  --accent-text: var(--accent-11);
+
+  /* radii.md nesting: l1 -> md, l2 -> lg, l3 -> xl */
+  --radius-l1: 0.375rem;
+  --radius-l2: 0.5rem;
+  --radius-l3: 0.75rem;
+  --radius-full: 9999px;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji';
+
+  --duration-fast: 100ms;
+  --duration-normal: 150ms;
+  --ease-default: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* == Reset ================================================================ */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+/* Component classes set `display`, which otherwise wins over the attribute. */
+[hidden] { display: none !important; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--fg-default);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.5rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, p, ul, ol, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+button { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+svg { display: block; }
+
+:where(a, button, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-default);
+  outline-offset: 2px;
+  border-radius: var(--radius-l1);
+}
+
+/* Park UI text styles */
+.text-xs { font-size: 0.75rem;  line-height: 1.125rem; }
+.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
+.text-md { font-size: 1rem;     line-height: 1.5rem; }
+.text-2xl { font-size: 1.5rem;  line-height: 2rem; }
+.text-3xl { font-size: 1.875rem; line-height: 2.375rem; letter-spacing: -0.02em; }
+
+.fg-muted { color: var(--fg-muted); }
+.fg-subtle { color: var(--fg-subtle); }
+.numeric { font-variant-numeric: tabular-nums; }
+
+/* == Button recipe ======================================================== */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  height: 2.5rem;
+  padding-inline: 0.875rem;
+  border: 0;
+  border-radius: var(--radius-l2);
+  background: transparent;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--duration-normal) var(--ease-default),
+              border-color var(--duration-normal) var(--ease-default),
+              color var(--duration-normal) var(--ease-default);
+}
+
+.btn svg { width: 1.1em; height: 1.1em; }
+.btn:disabled { cursor: not-allowed; color: var(--fg-subtle); }
+
+.btn--solid {
+  background: var(--accent-default);
+  color: var(--accent-fg);
+}
+.btn--solid:hover:not(:disabled) { background: var(--accent-emphasized); }
+.btn--solid:disabled { background: var(--bg-emphasized); color: var(--fg-subtle); }
+
+.btn--outline {
+  border: 1px solid var(--gray-a7);
+  color: var(--fg-default);
+}
+.btn--outline:hover:not(:disabled) { background: var(--gray-a2); }
+
+.btn--ghost { color: var(--fg-muted); }
+.btn--ghost:hover:not(:disabled) { background: var(--gray-a3); color: var(--fg-default); }
+
+.btn--icon {
+  width: 2.5rem;
+  padding-inline: 0;
+}
+
+.btn--sm {
+  height: 2.25rem;
+  padding-inline: 0.75rem;
+}
+.btn--sm.btn--icon { width: 2.25rem; }
+
+/* == Badge recipe ========================================================= */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 1.5rem;
+  padding-inline: 0.625rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-subtle);
+  color: var(--fg-default);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.badge--sm {
+  height: 1.25rem;
+  padding-inline: 0.5rem;
+}
+
+/* Tonal badges follow Radix's subtle recipe: 3 = surface, 6 = border, 11 = text */
+.badge--jade  { background: var(--jade-3);  border-color: var(--jade-6);  color: var(--jade-11); }
+.badge--amber { background: var(--amber-3); border-color: var(--amber-6); color: var(--amber-11); }
+.badge--red   { background: var(--red-3);   border-color: var(--red-6);   color: var(--red-11); }
+
+/* == Card recipe ========================================================== */
+.card {
+  background: var(--bg-default);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-l3);
+  box-shadow: var(--shadow-xs);
+}
+
+/* == Input recipe ========================================================= */
+.input {
+  width: 100%;
+  height: 2.5rem;
+  padding-inline: 0.75rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-l2);
+  background: var(--bg-default);
+  color: var(--fg-default);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  transition: border-color var(--duration-normal) var(--ease-default),
+              box-shadow var(--duration-normal) var(--ease-default);
+}
+
+.input::placeholder { color: var(--fg-subtle); }
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent-default);
+  box-shadow: 0 0 0 1px var(--accent-default);
+}
+
+/* == Segment group recipe ================================================= */
+.segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  height: 2.5rem;
+  padding: 0.25rem;
+  border-radius: var(--radius-l2);
+  background: var(--bg-muted);
+}
+
+.segment__item {
+  height: 2rem;
+  padding-inline: 0.75rem;
+  border: 0;
+  border-radius: calc(var(--radius-l2) - 0.125rem);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+
+.segment__item:hover { color: var(--fg-default); }
+
+.segment__item[aria-checked='true'] {
+  background: var(--bg-default);
+  color: var(--fg-default);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}

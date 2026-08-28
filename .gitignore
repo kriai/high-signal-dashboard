@@ -1,0 +1,15 @@
+# Local environment
+.venv/
+__pycache__/
+*.pyc
+
+# Scrape state: regenerated on every run, never meaningful in a diff
+cache.json
+cache.json.tmp
+health.json
+health.json.tmp
+
+.DS_Store
+.gstack/
+.vercel
+.env*.local

@@ -1,0 +1,12 @@
+{
+  "name": "High Signal",
+  "short_name": "High Signal",
+  "description": "AI and tech headlines from 27 sources, ranked by an explainable signal score.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fcfcfd",
+  "theme_color": "#5b5bd6",
+  "icons": [
+    { "src": "/static/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
