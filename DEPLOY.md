@@ -27,11 +27,17 @@ politeness delays intact, exactly as it does locally.
 ## Steps
 
 ```bash
-vercel login                        # interactive; must be done by a human
-vercel link                         # attach this directory to a project
-vercel blob store add high-signal   # provisions BLOB_READ_WRITE_TOKEN
-vercel deploy --prod
+vercel login                                        # interactive; needs a browser
+vercel link --yes                                   # attach this directory to a project
+vercel blob create-store high-signal --access public # then answer "y" to link it
+vercel deploy --prod --yes
 ```
+
+`create-store` prompts twice — once to link the store to the project, once to
+pick environments. Linking is what injects `BLOB_READ_WRITE_TOKEN`; skip it and
+the app deploys with no state backend and serves an empty dashboard. The store
+must be **public**: `store.py` reads blobs from their CDN URL without
+credentials.
 
 Then give Actions the same token, so the job writes where the app reads:
 
@@ -75,7 +81,22 @@ source, some rows are just older than others.
   invocation rather than a CDN hit. Copying `static/` into `public/` at build
   time would move it to the CDN.
 - The Blob calls in `store.py` use the REST API directly (`x-api-version: 10`)
-  because Vercel ships no Python SDK for Blob. If uploads start failing with a
-  version error, that header is the thing to bump.
+  because Vercel ships no Python SDK for Blob. Verified working against the live
+  API — write, read-back, overwrite, missing-key, and a 178 KB payload. If
+  uploads ever start failing with a version error, that header is the thing to
+  bump.
+- Cached headlines are readable by anyone with the blob URL, since the store is
+  public. They are public news headlines, so this is not a leak, but it is worth
+  knowing.
 - A manual refresh landing mid-workflow is overwritten by the workflow's full
   pass a moment later. Harmless — the full pass is strictly more complete.
+- **Five sources 403 from CI that work from a laptop**: Ben's Bites, Deep
+  Learning Weekly, Last Week in AI, The Machine Learning Engineer, The
+  Information. The same URLs return 200 from a residential IP, so this is
+  IP reputation, not a broken selector — four of the five are Substack-hosted
+  and Substack blocks datacenter ranges, which is what a GitHub Actions runner
+  has. A scrape that 403s contributes no articles, so those sources drop off
+  the dashboard until they succeed again (pre-existing behaviour: carry-forward
+  only covers sources a pass did not *reach*, not ones that failed). Fixing it
+  needs an egress proxy with residential IPs, or running the job somewhere
+  other than Actions.
