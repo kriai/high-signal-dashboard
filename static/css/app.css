@@ -2,11 +2,86 @@
    Dashboard layout, composed from the Park UI primitives in park.css.
 --------------------------------------------------------------------------- */
 
+/* == Type system ==========================================================
+   Three families, three jobs, and nothing outside them:
+
+     Newsreader      the editorial voice -- the wordmark, page headings,
+                     article headlines and publisher summaries. Loaded as the
+                     variable cut, so `font-optical-sizing: auto` walks the
+                     opsz axis with the type size: a 32px masthead and a 16px
+                     card headline get different drawings of the same face.
+     IBM Plex Sans   everything the app says in its own voice -- navigation,
+                     tabs, buttons, search, filters, labels, and the source and
+                     category names that title a panel.
+     IBM Plex Mono   numbers and machine metadata -- signal scores, score
+                     deltas, relative ages, the scrape counter, CSS selectors
+                     and keyboard keys.
+
+   Weights are deliberately few: 400/500/600 in the sans, 400/500 in the mono,
+   400-600 variable in Newsreader. 600 is reserved for panel and dialog
+   headings and for the uppercase micro-labels that need it at 12px; every
+   control that used to be 600 is now 500.
+
+   Nothing here says `line-height: normal`. Line boxes are fixed by this
+   stylesheet in rem or as unitless ratios, so the vertical grid is settled
+   before a single font file arrives; the fallback face below handles the
+   horizontal half.
+-------------------------------------------------------------------------- */
+
+/* Georgia is the closest web-safe stand-in for Newsreader, but it draws a much
+   larger x-height (0.481em against 0.426em) and would reflow every headline
+   the moment the real face swapped in. size-adjust matches the two, and the
+   overrides restate Newsreader's own metrics against that adjusted em
+   (ascent 0.735 and descent 0.265, each divided by 0.885). Systems without
+   Georgia never match the local() source, and fall through to the plain stack
+   below unadjusted. */
+@font-face {
+  font-family: 'Newsreader Fallback';
+  src: local('Georgia');
+  size-adjust: 88.5%;
+  ascent-override: 83.1%;
+  descent-override: 29.9%;
+  line-gap-override: 0%;
+}
+
+:root {
+  --font-editorial: 'Newsreader', 'Newsreader Fallback', Georgia,
+    'Times New Roman', Times, serif;
+}
+
+/* The editorial voice. Optical sizing is `auto` by default; it is stated so
+   the reason Newsreader is loaded as a variable font survives future edits. */
+.brand__name,
+.pagehead__title,
+.row__title,
+.detail__summary,
+.preview__list li span:last-child,
+.candidate__preview li {
+  font-family: var(--font-editorial);
+  font-optical-sizing: auto;
+}
+
+/* The machine voice. Plex Mono shares Plex Sans' vertical metrics and em, so
+   a score, an age or a counter sits on the same baseline as the interface
+   text beside it, and its digits are fixed-width without asking. */
+.row__score,
+.row__age,
+.chip--also,
+.progress__label,
+.bd__delta,
+.bd__total span:last-child,
+.panel:not(.panel--broken) > .panel__header > .badge,
+.preview__list .badge,
+kbd,
+code {
+  font-family: var(--font-mono);
+}
+
 .shell {
   width: 100%;
-  max-width: 90rem;
+  max-width: 108rem;
   margin-inline: auto;
-  padding-inline: 1.5rem;
+  padding-inline: 1.875rem;
 }
 
 .skip {
@@ -19,7 +94,7 @@
   background: var(--accent-default);
   color: var(--accent-fg);
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   transition: top var(--duration-normal) var(--ease-default);
 }
 
@@ -30,52 +105,41 @@
   position: sticky;
   top: 0;
   z-index: 20;
-  background: color-mix(in srgb, var(--bg-canvas) 85%, transparent);
-  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg-default) 96%, transparent);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .appbar__inner {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(20rem, 1fr) minmax(20rem, 30rem) minmax(20rem, 1fr);
   align-items: center;
-  gap: 0.625rem;
-  height: 4rem;
+  gap: 1.5rem;
+  height: 4.25rem;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  margin-right: auto;
+  gap: 1.75rem;
   min-width: 0;
 }
 
-.brand__mark {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex-shrink: 0;
-  border-radius: var(--radius-l2);
-  background: var(--accent-default);
-  color: var(--accent-fg);
-}
-
-.brand__mark svg { width: 1.125rem; height: 1.125rem; }
-.brand__text { min-width: 0; }
-
 .brand__name {
-  display: block;
-  font-size: 1rem;
-  line-height: 1.25rem;
+  flex-shrink: 0;
+  color: var(--fg-default);
+  /* Newsreader carries a small x-height, so the masthead needs a little more
+     size than the wide serif it replaces to hold the same optical weight. */
+  font-size: 2rem;
+  line-height: 1;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
-.brand__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
+.brand__tagline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.75rem;
   line-height: 1.125rem;
   color: var(--fg-muted);
@@ -115,8 +179,9 @@
 
 .search {
   position: relative;
-  flex: 0 1 18rem;
-  min-width: 9rem;
+  width: 100%;
+  max-width: 30rem;
+  justify-self: center;
 }
 
 .search__icon {
@@ -132,6 +197,12 @@
 
 .search .input { padding-left: 2.25rem; padding-right: 2.5rem; }
 
+.search .input {
+  border-color: var(--border-subtle);
+  border-radius: 0.5rem;
+  box-shadow: none;
+}
+
 .search__kbd {
   position: absolute;
   right: 0.5rem;
@@ -144,27 +215,47 @@
   color: var(--fg-subtle);
   font-size: 0.6875rem;
   line-height: 1rem;
-  font-family: var(--font-sans);
   pointer-events: none;
 }
 
 .search:focus-within .search__kbd { opacity: 0; }
 
-.brand__dot { color: var(--fg-subtle); }
+.appbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.appbar__actions .btn:not(.pill) {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.appbar__actions .btn:not(.pill):hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--fg-default);
+}
 
 /* Warning pill: the count of sources that stopped returning headlines. */
 .pill {
   gap: 0.375rem;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--amber-6);
-  background: var(--amber-3);
-  color: var(--amber-11);
+  border-radius: 0.4375rem;
+  border: 1px solid color-mix(in srgb, var(--amber-6) 70%, var(--border-subtle));
+  background: var(--bg-default);
+  color: var(--fg-default);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
-.pill:hover { background: color-mix(in srgb, var(--amber-6) 40%, var(--amber-3)); }
+.pill:hover { background: var(--bg-subtle); }
 .pill svg { width: 0.9375rem; height: 0.9375rem; }
+.pill svg { color: var(--amber-11); }
 
 /* == Scrape progress ====================================================== */
 .progress {
@@ -199,13 +290,14 @@
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  margin-top: 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--amber-6);
-  border-radius: var(--radius-l2);
-  background: var(--amber-3);
-  color: var(--amber-11);
-  font-size: 0.875rem;
+  min-height: 3.25rem;
+  margin-top: 1.125rem;
+  padding: 0.75rem 1.125rem;
+  border: 1px solid color-mix(in srgb, var(--amber-6) 65%, var(--border-subtle));
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--amber-3) 30%, var(--bg-default));
+  color: color-mix(in srgb, var(--amber-11) 78%, var(--fg-default));
+  font-size: 0.8125rem;
   line-height: 1.25rem;
 }
 
@@ -217,40 +309,88 @@
 
 .banner__icon { width: 1.125rem; height: 1.125rem; flex-shrink: 0; }
 .banner .btn { margin-left: auto; color: inherit; }
+.banner .btn::after { content: ' →'; }
 
 /* == Toolbar ============================================================== */
-/* The toolbar is now the first thing under the header, so it carries the top
-   spacing the summary tiles used to provide. */
+.pagehead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-block: 1.75rem 1.25rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pagehead__intro {
+  flex: 1 0 auto;
+  min-width: 15rem;
+}
+
+.pagehead__title {
+  color: var(--fg-default);
+  font-size: clamp(2rem, 2.1vw, 2.25rem);
+  line-height: 1.1;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
   gap: 0.625rem;
   flex-wrap: wrap;
-  padding-top: 1.5rem;
-  padding-bottom: 1rem;
-}
-
-@media (max-width: 30rem) {
-  .toolbar { padding-top: 1rem; }
+  justify-content: flex-end;
 }
 
 .toolbar__count {
-  margin-right: auto;
-  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
   line-height: 1.25rem;
   color: var(--fg-muted);
 }
 
 .toolbar__count b {
-  color: var(--fg-default);
-  font-weight: 600;
+  color: inherit;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
-.btn[aria-pressed='true'] {
-  background: var(--accent-3);
-  border-color: var(--accent-7);
-  color: var(--accent-text);
+.toolbar .segment {
+  gap: 0;
+  height: 2.375rem;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.4375rem;
+  background: transparent;
+}
+
+.toolbar .segment__item {
+  height: 100%;
+  padding-inline: 0.875rem;
+  border-radius: 0;
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.toolbar .segment__item + .segment__item { border-left: 1px solid var(--border-subtle); }
+
+.toolbar .segment__item[aria-checked='true'],
+.toolbar .btn[aria-pressed='true'] {
+  border-color: #242424;
+  background: #242424;
+  color: #fff;
+  box-shadow: none;
+}
+
+.toolbar > .btn,
+.toolbar > .menu > .btn {
+  height: 2.375rem;
+  border-color: var(--border-subtle);
+  border-radius: 0.4375rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 /* == Menu ================================================================= */
@@ -301,17 +441,17 @@
   gap: 0.25rem;
   height: 1.75rem;
   padding-inline: 0.625rem;
-  border: 1px solid var(--accent-7);
-  border-radius: var(--radius-full);
-  background: var(--accent-3);
-  color: var(--accent-text);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.375rem;
+  background: transparent;
+  color: var(--fg-muted);
   font-size: 0.75rem;
   line-height: 1.125rem;
   font-weight: 500;
   cursor: pointer;
 }
 
-.filter:hover { background: var(--accent-4); }
+.filter:hover { border-color: var(--border-muted); background: var(--bg-subtle); color: var(--fg-default); }
 .filter__x { width: 0.75rem !important; height: 0.75rem !important; }
 
 .filter--clear {
@@ -334,7 +474,7 @@
   color: var(--accent-fg);
   font-size: 0.8125rem;
   line-height: 1.25rem;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   box-shadow: var(--shadow-lg);
   animation: toast-in var(--duration-normal) var(--ease-default);
@@ -350,7 +490,7 @@
   grid-template-columns: repeat(auto-fill, minmax(20.5rem, 1fr));
   gap: 1rem;
   align-items: start;
-  padding-bottom: 3rem;
+  padding-block: 1.125rem 3rem;
 }
 
 .grid[data-view='feed'],
@@ -360,7 +500,10 @@
 
 /* == Feed ================================================================= */
 .feed {
-  overflow: hidden;
+  /* clip, not hidden: both round the rows off against the card, but 'hidden'
+     makes this a scroll container and the row entrance below resolves its
+     view() timeline against the nearest one. */
+  overflow: clip;
   list-style: none;
 }
 
@@ -371,7 +514,7 @@
   font-size: 0.75rem;
   line-height: 1.125rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-subtle);
 }
@@ -467,6 +610,285 @@
 }
 .panel__body::-webkit-scrollbar-thumb:hover { background: var(--gray-8); }
 
+/* == Editorial category cards ============================================ */
+.grid[data-view='categories'] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.875rem;
+  align-items: stretch;
+}
+
+.grid[data-view='categories'] .panel {
+  height: 18.25rem;
+  border-color: color-mix(in srgb, var(--border-subtle) 78%, transparent);
+  border-radius: 0.5rem;
+  box-shadow: none;
+}
+
+.grid[data-view='categories'] .panel:hover {
+  border-color: var(--border-muted);
+  box-shadow: none;
+}
+
+.grid[data-view='categories'] .panel__header {
+  min-height: 4.5rem;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  border-bottom-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  background: var(--bg-default);
+}
+
+.panel__icon {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+}
+
+.panel__icon svg { width: 1.125rem; height: 1.125rem; }
+.panel__heading { display: flex; min-width: 0; flex-direction: column; gap: 0.125rem; }
+
+.panel__icon--green  { background: #e8f5ee; color: #187c59; }
+.panel__icon--violet { background: #f0eafd; color: #7546c9; }
+.panel__icon--blue   { background: #e7effb; color: #356fc5; }
+.panel__icon--teal   { background: #e4f4f0; color: #13806d; }
+.panel__icon--orange { background: #fdf0e8; color: #c35e32; }
+.panel__icon--amber  { background: #fff3d9; color: #b56a0a; }
+.panel__icon--red    { background: #fbe9e9; color: #c43f46; }
+.panel__icon--slate  { background: #edf0f2; color: #59636c; }
+
+.grid[data-view='categories'] .panel__title {
+  flex: 0 1 auto;
+  color: var(--fg-default);
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.grid[data-view='categories'] .panel__sub {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+/* Pinning is an ordering preference, not a filter, so its control stays out of
+   the way: it appears on hover, or stays lit once the topic is pinned. */
+.panel__pin {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 0;
+  border-radius: var(--radius-l1);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-default),
+              background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+
+.panel__pin svg { width: 0.9375rem; height: 0.9375rem; }
+.panel__pin:hover { background: var(--gray-a3); color: var(--fg-default); }
+
+.panel--category:hover .panel__pin,
+.panel__pin[aria-pressed='true'],
+.panel__pin:focus-visible { opacity: 1; }
+
+.panel__pin[aria-pressed='true'] { color: var(--fg-default); }
+
+.grid[data-view='categories'] .panel::after {
+  height: 1.75rem;
+  background: linear-gradient(to bottom, transparent,
+    color-mix(in srgb, var(--bg-default) 88%, transparent));
+}
+
+.grid[data-view='categories'] .panel[data-more='true']::after { opacity: 0.68; }
+
+.grid[data-view='categories'] .panel__body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.grid[data-view='categories'] .panel:hover .panel__body,
+.grid[data-view='categories'] .panel__body:hover {
+  scrollbar-color: var(--border-muted) transparent;
+}
+
+.grid[data-view='categories'] .panel__body::-webkit-scrollbar { width: 0.3125rem; }
+.grid[data-view='categories'] .panel__body::-webkit-scrollbar-thumb {
+  border: 0;
+  background: transparent;
+}
+
+.grid[data-view='categories'] .panel:hover .panel__body::-webkit-scrollbar-thumb,
+.grid[data-view='categories'] .panel__body:hover::-webkit-scrollbar-thumb {
+  background: var(--border-muted);
+}
+
+.grid[data-view='categories'] .row + .row {
+  border-top-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+}
+
+.grid[data-view='categories'] .row__line {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.75rem 2.5rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.375rem;
+  min-height: 5.875rem;
+  padding: 0.8125rem 0.75rem;
+}
+
+.grid[data-view='categories'] .row:hover .row__line { background: var(--bg-subtle); }
+
+.grid[data-view='categories'] .row[data-selected='true'] {
+  box-shadow: inset 0.125rem 0 0 var(--fg-default);
+}
+
+.grid[data-view='categories'] .row[data-selected='true'] .row__line {
+  background: var(--bg-subtle);
+}
+
+.grid[data-view='categories'] .row__score {
+  grid-column: 1;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-default);
+  font-size: 0.75rem;
+  line-height: 1.4375rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.grid[data-view='categories'] .row__score:hover {
+  color: var(--fg-muted);
+  text-decoration: underline;
+  transform: none;
+}
+
+.grid[data-view='categories'] .row__age {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding-top: 0;
+  text-align: left;
+  font-size: 0.6875rem;
+  line-height: 1.4375rem;
+  color: var(--fg-subtle);
+}
+
+.grid[data-view='categories'] .row__link {
+  display: block;
+}
+
+.grid[data-view='categories'] .row__title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-default);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.grid[data-view='categories'] .row__link:hover .row__title { color: var(--fg-muted); }
+.grid[data-view='categories'] .row__main {
+  grid-column: 3;
+  grid-row: 1;
+  gap: 0.25rem;
+}
+
+/* The positional row entrance is useful in the continuous feed. In a short,
+   independently scrolling card it leaves the second visible story mid-fade. */
+.grid[data-view='categories'] .row__line { animation: none; }
+
+.grid[data-view='categories'] .row__meta { min-height: 1rem; }
+
+.grid[data-view='categories'] .chip--source {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-subtle);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 400;
+}
+
+.grid[data-view='categories'] .chip--source:hover {
+  background: transparent;
+  color: var(--fg-default);
+  text-decoration: underline;
+}
+
+.grid[data-view='categories'] .row__icons {
+  position: absolute;
+  z-index: 2;
+  top: 0.375rem;
+  right: 0.375rem;
+  gap: 0;
+  padding: 0.125rem;
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.grid[data-view='categories'] .row:hover .row__icons,
+.grid[data-view='categories'] .row[data-selected='true'] .row__icons,
+.grid[data-view='categories'] .row[data-saved='true'] .row__icons {
+  background: color-mix(in srgb, var(--bg-default) 92%, transparent);
+}
+
+.grid[data-view='categories'] .row__icon { width: 1.5rem; height: 1.5rem; }
+.grid[data-view='categories'] .detail { padding-left: 0.75rem; }
+
+[data-theme='dark'] .panel__icon--green  { background: #17352b; color: #72c7a1; }
+[data-theme='dark'] .panel__icon--violet { background: #2d2540; color: #b9a2ec; }
+[data-theme='dark'] .panel__icon--blue   { background: #1c2d45; color: #8cb5ed; }
+[data-theme='dark'] .panel__icon--teal   { background: #173632; color: #72c9b7; }
+[data-theme='dark'] .panel__icon--orange { background: #3c271f; color: #e59b77; }
+[data-theme='dark'] .panel__icon--amber  { background: #3a2d16; color: #e5b85d; }
+[data-theme='dark'] .panel__icon--red    { background: #3c2023; color: #e4898e; }
+[data-theme='dark'] .panel__icon--slate  { background: #292d31; color: #aeb7bf; }
+
+[data-theme='dark'] .toolbar .segment__item[aria-checked='true'],
+[data-theme='dark'] .toolbar .btn[aria-pressed='true'] {
+  border-color: #e8e8e8;
+  background: #e8e8e8;
+  color: #171717;
+}
+
+/* Few, wide columns: a headline needs room to land on one or two lines, so the
+   card count per row stays low and each column carries the width instead. */
+@media (min-width: 44rem) {
+  .grid[data-view='categories'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 68rem) {
+  .grid[data-view='categories'] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (min-width: 104rem) {
+  .grid[data-view='categories'] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 /* A source that fetched but matched nothing still gets a card, so a broken
    selector cannot masquerade as a slow news day. */
 .panel--broken { border-color: var(--red-6); }
@@ -511,6 +933,26 @@
 
 .row:hover .row__line { background: var(--bg-subtle); }
 
+/* Rows resolve as they enter the scrollport. This runs on a view() timeline
+   rather than an observer, which makes the state positional: a row already on
+   screen renders settled, so filtering and polling never replay the entrance
+   for headlines that were already sitting there. Applied to the line, not the
+   row, so the separator borders stay put while the content moves. */
+@supports (animation-timeline: view()) {
+  .row__line {
+    animation: row-in linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 70%;
+  }
+
+  /* Partial fade, per the entrance rule below: it moves, it does not arrive
+     out of nothing. */
+  @keyframes row-in {
+    from { opacity: 0.4; transform: translateY(0.375rem); }
+    to   { opacity: 1; transform: none; }
+  }
+}
+
 /* Keyboard selection needs to be unmistakable without moving anything. */
 .row[data-selected='true'] { box-shadow: inset 0.1875rem 0 0 var(--accent-default); }
 .row[data-selected='true'] .row__line { background: var(--accent-a2); }
@@ -521,11 +963,12 @@
 .row[data-read='true'] .row__score { opacity: 0.5; }
 
 .row__score {
-  margin-top: 0.0625rem;
+  margin-top: 0.09375rem;
   flex-shrink: 0;
-  min-width: 2.125rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  /* Wide enough for a three-digit score set in Plex Mono, so the headline
+     column starts at the same x on every row whatever the number. */
+  min-width: 2.5rem;
+  font-weight: 500;
   cursor: pointer;
   transition: transform var(--duration-fast) var(--ease-default);
 }
@@ -537,8 +980,9 @@
 .row__title {
   display: block;
   min-width: 0;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
+  font-size: 1rem;
+  line-height: 1.4375rem;
+  font-weight: 500;
   color: var(--fg-default);
 }
 
@@ -573,11 +1017,10 @@
 
 .row__age {
   flex-shrink: 0;
-  min-width: 2.25rem;
+  min-width: 2.5rem;
   text-align: right;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   line-height: 1.25rem;
-  font-variant-numeric: tabular-nums;
   color: var(--fg-muted);
   cursor: help;
 }
@@ -665,6 +1108,7 @@
 .row--feed .row__line { align-items: center; padding-block: 0.5rem; }
 
 .row--feed .row__title {
+  line-height: 1.375rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -696,8 +1140,8 @@ mark {
 
 .detail__summary {
   padding-top: 0.75rem;
-  font-size: 0.8125rem;
-  line-height: 1.375rem;
+  font-size: 0.9375rem;
+  line-height: 1.5rem;
   color: var(--fg-muted);
 }
 
@@ -716,7 +1160,7 @@ mark {
   font-size: 0.75rem;
   line-height: 1.125rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-subtle);
 }
@@ -766,8 +1210,7 @@ mark {
 
 .bd__delta {
   text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--fg-muted);
 }
 
@@ -785,8 +1228,7 @@ mark {
   padding-top: 0.375rem;
   border-top: 1px solid var(--border-subtle);
   font-size: 0.8125rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
 /* == Empty / loading states =============================================== */
@@ -966,7 +1408,7 @@ mark {
   display: block;
   font-size: 0.875rem;
   line-height: 1.25rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .srow__name:hover { color: var(--accent-text); text-decoration: underline; }
@@ -1008,7 +1450,7 @@ mark {
   gap: 0.5rem;
   padding: 0.625rem 0.875rem;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   list-style: none;
 }
@@ -1065,7 +1507,7 @@ mark {
   margin-bottom: 0.5rem;
   font-size: 0.75rem;
   line-height: 1.125rem;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--fg-muted);
 }
 
@@ -1104,7 +1546,7 @@ mark {
 .candidate__title strong {
   font-size: 0.875rem;
   line-height: 1.25rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .candidate__title span {
@@ -1131,8 +1573,8 @@ mark {
 
 .candidate__preview li {
   min-width: 0;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.3125rem;
   color: var(--fg-muted);
 }
 
@@ -1155,7 +1597,7 @@ mark {
   color: var(--fg-muted);
   font-size: 0.75rem;
   line-height: 1.125rem;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -1207,8 +1649,8 @@ mark {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.3125rem;
   color: var(--fg-muted);
 }
 
@@ -1243,7 +1685,6 @@ kbd {
   border-radius: var(--radius-l1);
   background: var(--bg-muted);
   color: var(--fg-default);
-  font-family: var(--font-sans);
   font-size: 0.75rem;
   line-height: 1.125rem;
   text-align: center;
@@ -1287,30 +1728,114 @@ kbd {
   to { opacity: 0; transform: translateY(0.5rem); }
 }
 
+/* == Footer =============================================================== */
+.sitefooter {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-default);
+}
+
+.sitefooter__inner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 3.5rem;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sitefooter .pulse { width: 0.375rem; height: 0.375rem; }
+.sitefooter__sep { color: var(--fg-subtle); }
+
 /* == Responsive =========================================================== */
-@media (max-width: 60rem) {
-  .toolbar__count { flex: 1 0 100%; margin-right: 0; }
+@media (max-width: 90rem) {
+  .brand__tagline { display: none; }
+}
+
+@media (max-width: 76rem) {
+  .appbar__inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto;
+    padding-block: 0.625rem;
+  }
+
+  .search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    max-width: none;
+  }
+
+  .pagehead {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .toolbar { justify-content: flex-start; }
 }
 
 @media (max-width: 48rem) {
   .row--feed .chip--category { display: none; }
   .row__tags { max-width: 40%; }
   .shell { padding-inline: 1rem; }
-  .appbar__inner { height: auto; flex-wrap: wrap; padding-block: 0.75rem; }
-  .brand { flex: 1 0 100%; }
-  .search { flex: 1 1 100%; order: 3; }
   .search__kbd { display: none; }
+  .pagehead { padding-block: 1.375rem 1rem; }
+  .pagehead__title { font-size: 2rem; }
+  .toolbar { gap: 0.5rem; }
+  .toolbar .segment__item { padding-inline: 0.6875rem; }
   .toasts { right: 1rem; left: 1rem; bottom: 1rem; }
   .detail { padding-left: 0.875rem; }
   .bd__row { grid-template-columns: minmax(0, 1fr) 3rem 2.5rem; }
-  .newpill { top: 6.5rem; }
+  .newpill { top: 7.5rem; }
   /* Touch has no hover, so row actions cannot hide behind it. */
   .row__icon { opacity: 1; }
+  .panel__pin { opacity: 1; }
+  .grid[data-view='categories'] .row__main { padding-right: 3.25rem; }
+}
+
+@media (max-width: 40rem) {
+  .appbar__inner { gap: 0.75rem; }
+  .brand__name { font-size: 1.75rem; }
+  .appbar__actions .pill {
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+  }
+  .appbar__actions .pill span { display: none; }
+  .grid[data-view='categories'] .panel { height: 20rem; }
 }
 
 @media (max-width: 30rem) {
   .row--feed .row__tags { display: none; }
   .keys__row { grid-template-columns: 5.5rem minmax(0, 1fr); }
+  .toolbar > .btn,
+  .toolbar > .menu > .btn { padding-inline: 0.625rem; }
+}
+
+/* == Theme wipe =========================================================== */
+/* The incoming theme is painted over the outgoing one through a circle opening
+   from the toggle, so the swap reads as something the button did rather than a
+   repaint. Scoped to the switching flag because ::view-transition rules are
+   global and would otherwise capture any other transition added later. */
+html[data-theme-switching]::view-transition-old(root),
+html[data-theme-switching]::view-transition-new(root) {
+  /* The UA cross-fade blends the pair with plus-lighter, which blows out the
+     colours once the two are stacked opaquely instead of fading. */
+  mix-blend-mode: normal;
+}
+
+html[data-theme-switching]::view-transition-old(root) { animation: none; }
+
+html[data-theme-switching]::view-transition-new(root) {
+  animation: theme-wipe 420ms var(--ease-default);
+}
+
+/* --theme-x/y/r are written onto the root by the toggle: the button's centre,
+   and the distance from it to the furthest viewport corner. */
+@keyframes theme-wipe {
+  from { clip-path: circle(0 at var(--theme-x) var(--theme-y)); }
+  to   { clip-path: circle(var(--theme-r) at var(--theme-x) var(--theme-y)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1319,6 +1844,12 @@ kbd {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  /* A scroll-driven animation takes its progress from the timeline, not from
+     animation-duration, so the override above never reaches it -- and clearing
+     the timeline alone would strand the row in the before-phase fill at 0.4.
+     The entrance has to come off entirely. */
+  .row__line { animation: none !important; }
 }
 
 @keyframes spin {

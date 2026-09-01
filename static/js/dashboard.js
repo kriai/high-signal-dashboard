@@ -44,6 +44,33 @@
     'Business & Markets', 'Other'
   ];
 
+  // Editorial category art. The names remain the application's taxonomy; this
+  // only selects a restrained icon and colour treatment for the category view.
+  var CATEGORY_ART = {
+    'Chips & Hardware':          { icon: 'cpu',       tone: 'green' },
+    'Funding & M&A':             { icon: 'landmark',  tone: 'violet' },
+    'Big Tech':                  { icon: 'buildings', tone: 'blue' },
+    'Models & Releases':         { icon: 'sparkles',  tone: 'teal' },
+    'Policy & Regulation':       { icon: 'landmark',  tone: 'orange' },
+    'Crypto & Fintech':          { icon: 'bitcoin',   tone: 'amber' },
+    'Security':                  { icon: 'shield',    tone: 'red' },
+    'AI Research':               { icon: 'flask',     tone: 'blue' },
+    'Enterprise AI':             { icon: 'briefcase', tone: 'green' },
+    'Data & Infrastructure':     { icon: 'server',    tone: 'violet' },
+    'Science & Space':           { icon: 'orbit',     tone: 'blue' },
+    'AI Tools & Agents':         { icon: 'bot',       tone: 'teal' },
+    'Engineering & Open Source': { icon: 'code',      tone: 'violet' },
+    'Business & Markets':        { icon: 'trending',  tone: 'green' },
+    'Other':                     { icon: 'newspaper', tone: 'slate' }
+  };
+
+  var CATEGORY_ORDER = [
+    'Chips & Hardware', 'Funding & M&A', 'Big Tech', 'Models & Releases',
+    'Policy & Regulation', 'Crypto & Fintech', 'Security', 'AI Research',
+    'Enterprise AI', 'Data & Infrastructure', 'AI Tools & Agents',
+    'Engineering & Open Source', 'Science & Space', 'Business & Markets', 'Other'
+  ];
+
   var state = {
     articles: [],
     pending: null,          // fetched but withheld so the list never jumps
@@ -162,7 +189,8 @@
   var store = {
     read: readJson('hs.read', []),
     saved: readJson('hs.saved', []),
-    hidden: readJson('hs.hidden', [])
+    hidden: readJson('hs.hidden', []),
+    pinned: readJson('hs.pinned', [])
   };
 
   var readIndex = {};
@@ -171,10 +199,27 @@
   store.hidden.forEach(function (id) { hiddenIndex[id] = true; });
   var savedIndex = {};
   store.saved.forEach(function (item) { savedIndex[item.id] = item; });
+  var pinnedIndex = {};
+  store.pinned.forEach(function (name) { pinnedIndex[name] = true; });
 
   function isRead(id) { return readIndex[id] === true; }
   function isSaved(id) { return savedIndex[id] !== undefined; }
   function isHidden(id) { return hiddenIndex[id] === true; }
+  function isPinned(name) { return pinnedIndex[name] === true; }
+
+  // Pinning only moves a category to the front of the grid. Categories are a
+  // closed taxonomy of a dozen or so names, so this set needs no cap.
+  function togglePinned(name) {
+    if (isPinned(name)) {
+      delete pinnedIndex[name];
+      store.pinned = store.pinned.filter(function (existing) { return existing !== name; });
+    } else {
+      pinnedIndex[name] = true;
+      store.pinned.push(name);
+    }
+    writeJson('hs.pinned', store.pinned);
+    return isPinned(name);
+  }
 
   function markRead(id, read) {
     if (read === isRead(id)) return false;
@@ -543,9 +588,15 @@
     var saved = isSaved(article.id);
 
     var title = '<span class="row__title">' + highlight(article.title, query) + '</span>';
+    var articleLink = '<a class="row__link" href="' + escapeHtml(safeUrl(article.link)) + '"' +
+      ' target="_blank" rel="noopener noreferrer" data-act="open">' + title + '</a>';
+    // Category metadata is interactive, so it must sit beside the article link
+    // rather than inside it. The wrapper still keeps the source directly below
+    // the headline without nesting a button in an anchor.
     var body = opts.meta
-      ? '<span class="row__main">' + title + '<span class="row__meta">' + opts.meta + '</span></span>'
-      : title;
+      ? '<span class="row__main">' + articleLink +
+        '<span class="row__meta">' + opts.meta + '</span></span>'
+      : articleLink;
 
     return '<li class="row' + (opts.className ? ' ' + opts.className : '') + '"' +
       ' data-id="' + id + '"' +
@@ -556,8 +607,7 @@
         '<button type="button" class="badge badge--sm badge--' + scoreTone(score) +
         ' row__score" data-act="expand" aria-expanded="' + (expanded ? 'true' : 'false') +
         '" title="Signal score ' + score + ' — click for the breakdown">' + score + '</button>' +
-        '<a class="row__link" href="' + escapeHtml(safeUrl(article.link)) + '"' +
-        ' target="_blank" rel="noopener noreferrer" data-act="open">' + body + '</a>' +
+        body +
         (opts.tags ? '<span class="row__tags">' + opts.tags + '</span>' : '') +
         (age.text
           ? '<span class="row__age' + (age.estimated ? ' row__age--est' : '') +
@@ -617,6 +667,36 @@
     var sub = showSource
       ? plural(distinct(group.articles, function (a) { return a.source; }), 'source')
       : '';
+
+    if (showSource) {
+      var art = CATEGORY_ART[group.name] || CATEGORY_ART.Other;
+      var pinned = isPinned(group.name);
+      var pinLabel = (pinned ? 'Unpin ' : 'Pin ') + group.name;
+      return '<section class="card panel panel--category" data-pinned="' +
+        (pinned ? 'true' : 'false') + '">' +
+        '<header class="panel__header">' +
+          '<span class="panel__icon panel__icon--' + art.tone + '">' +
+            icon(art.icon, '') +
+          '</span>' +
+          '<span class="panel__heading">' +
+            '<h2 class="panel__title" title="' + name + '">' + name + '</h2>' +
+            '<span class="panel__sub">' + escapeHtml(sub) + '</span>' +
+          '</span>' +
+          '<button type="button" class="panel__pin" data-act="toggle-pin"' +
+            ' data-value="' + name + '" aria-pressed="' + (pinned ? 'true' : 'false') + '"' +
+            ' title="' + escapeHtml(pinLabel) + '" aria-label="' + escapeHtml(pinLabel) + '">' +
+            icon(pinned ? 'pin-on' : 'pin', '') +
+          '</button>' +
+        '</header>' +
+        '<ul class="panel__body" data-group="' + name + '">' +
+          group.articles.map(function (article) {
+            return renderRow(article, query, {
+              meta: chip(article.source, 'source', 'filter-source')
+            });
+          }).join('') +
+        '</ul>' +
+      '</section>';
+    }
 
     return '<section class="card panel">' +
       '<header class="panel__header">' +
@@ -678,7 +758,7 @@
     var rows = '';
     for (var r = 0; r < 5; r++) {
       rows += '<div class="skeleton-row">' +
-        '<span class="skeleton" style="width:2.125rem;height:1.25rem;border-radius:9999px"></span>' +
+        '<span class="skeleton" style="width:2.5rem;height:1.25rem;border-radius:9999px"></span>' +
         '<span class="skeleton" style="flex:1;height:0.75rem"></span>' +
       '</div>';
     }
@@ -692,11 +772,16 @@
 
     var panels = '';
     for (var p = 0; p < 6; p++) {
-      panels += '<section class="card panel">' +
+      panels += '<section class="card panel' +
+        (state.view === 'categories' ? ' panel--category' : '') + '">' +
         '<header class="panel__header">' +
-          '<span class="skeleton" style="width:40%;height:0.875rem"></span>' +
+          (state.view === 'categories'
+            ? '<span class="panel__icon"><span class="skeleton" style="width:100%;height:100%"></span></span>' +
+              '<span class="panel__heading"><span class="skeleton" style="width:7rem;height:0.875rem"></span>' +
+              '<span class="skeleton" style="width:3.25rem;height:0.625rem"></span></span>'
+            : '<span class="skeleton" style="width:40%;height:0.875rem"></span>') +
         '</header>' +
-        '<div>' + rows + '</div>' +
+        '<div class="panel__body">' + rows + '</div>' +
       '</section>';
     }
 
@@ -803,7 +888,7 @@
     }).length;
     var shown = articles.length;
     var scope = state.view === 'categories'
-      ? plural(distinct(articles, categoryOf), 'category', 'categories')
+      ? plural(distinct(articles, categoryOf), 'topic')
       : plural(distinct(articles, function (a) { return a.source; }), 'source');
 
     el.resultCount.innerHTML = isFiltered()
@@ -856,6 +941,25 @@
 
     var showSource = state.view === 'categories';
     var groups = groupBy(articles, showSource ? categoryOf : function (a) { return a.source; });
+
+    if (showSource) {
+      groups.sort(function (a, b) {
+        var ai = CATEGORY_ORDER.indexOf(a.name);
+        var bi = CATEGORY_ORDER.indexOf(b.name);
+        return (ai < 0 ? CATEGORY_ORDER.length : ai) -
+               (bi < 0 ? CATEGORY_ORDER.length : bi) || a.name.localeCompare(b.name);
+      });
+
+      // Pinned topics lead the grid; the editorial order above still decides
+      // the run within each half, so pinning moves a card without reshuffling
+      // everything around it.
+      var lead = [];
+      var rest = [];
+      groups.forEach(function (group) {
+        (isPinned(group.name) ? lead : rest).push(group);
+      });
+      groups = lead.concat(rest);
+    }
 
     if (!showSource && state.health) {
       // Attach each panel's health so a working source and a stale one do not
@@ -1514,6 +1618,37 @@
     writePref('hs.theme', preference);
   }
 
+  // Same swap, wrapped in a circular wipe out of the control that caused it.
+  // Only the click path animates: a system-preference change or the initial
+  // paint has no origin to open from, and no gesture to explain the motion.
+  function switchTheme(preference, origin) {
+    if (!document.startViewTransition ||
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      applyTheme(preference);
+      return;
+    }
+
+    var root = document.documentElement;
+    var box = origin.getBoundingClientRect();
+    var x = box.left + box.width / 2;
+    var y = box.top + box.height / 2;
+
+    root.style.setProperty('--theme-x', x + 'px');
+    root.style.setProperty('--theme-y', y + 'px');
+    // Reach the furthest corner, or the circle stops short of the page.
+    root.style.setProperty('--theme-r', Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    ) + 'px');
+
+    root.dataset.themeSwitching = 'true';
+    document.startViewTransition(function () {
+      applyTheme(preference);
+    }).finished.then(clear, clear);
+
+    function clear() { delete root.dataset.themeSwitching; }
+  }
+
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
     if (readPref('hs.theme', 'system') === 'system') applyTheme('system');
   });
@@ -1710,6 +1845,9 @@
       markRead(article.id, !isRead(article.id));
       render();
       select(article.id);
+    } else if (act === 'toggle-pin') {
+      togglePinned(trigger.dataset.value);
+      render();
     } else if (act === 'filter-source') setFilter('source', trigger.dataset.value);
     else if (act === 'filter-category') setFilter('category', trigger.dataset.value);
     else if (act === 'manage-source') openSources(trigger.dataset.value);
@@ -1738,7 +1876,7 @@
 
   el.themeBtn.addEventListener('click', function () {
     var current = readPref('hs.theme', 'system');
-    applyTheme(THEMES[(THEMES.indexOf(current) + 1) % THEMES.length]);
+    switchTheme(THEMES[(THEMES.indexOf(current) + 1) % THEMES.length], el.themeBtn);
   });
 
   /* -- Export menu -------------------------------------------------------- */

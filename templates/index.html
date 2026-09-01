@@ -26,6 +26,14 @@
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
     <link rel="alternate" type="application/rss+xml" title="High Signal" href="/feed.xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Three families in one request. Newsreader is the variable cut, with
+         the opsz axis intact so headlines optically size themselves; Plex Sans
+         and Plex Mono ship only the weights the stylesheets actually ask for
+         (400/500/600 and 400/500 plus the italic the estimated-age style
+         needs). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,400..600&amp;display=swap">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/park.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
@@ -89,6 +97,16 @@
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
             </g>
+            <g id="i-pin" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 17v5"/>
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
+            </g>
+            <g id="i-pin-on" fill="currentColor" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 17v5"/>
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
+            </g>
             <g id="i-x" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 6 6 18M6 6l12 12"/>
@@ -147,60 +165,107 @@
                 <circle cx="12" cy="12" r="10"/>
                 <circle cx="12" cy="12" r="3" fill="currentColor"/>
             </g>
+            <g id="i-cpu" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/>
+                <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>
+            </g>
+            <g id="i-landmark" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m3 10 9-7 9 7M5 10v9M9 10v9M15 10v9M19 10v9M3 21h18"/>
+            </g>
+            <g id="i-buildings" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 22V4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v18M2 22h20M9 6h4M9 10h4M9 14h4M9 18h4M16 9h3a1 1 0 0 1 1 1v12M4 22v-7a1 1 0 0 1 1-1h1"/>
+            </g>
+            <g id="i-sparkles" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m12 3-1.2 3.2a4 4 0 0 1-2.4 2.4L5 10l3.4 1.4a4 4 0 0 1 2.4 2.4L12 17l1.2-3.2a4 4 0 0 1 2.4-2.4L19 10l-3.4-1.4a4 4 0 0 1-2.4-2.4L12 3ZM5 3v4M3 5h4M19 17v4M17 19h4"/>
+            </g>
+            <g id="i-bitcoin" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><path d="M9.5 7.5h4a2.5 2.5 0 0 1 0 5h-4m0 0h4.5a2.5 2.5 0 0 1 0 5H9.5V7.5ZM11 5v2.5M14 5v2.5M11 17.5V20M14 17.5V20"/>
+            </g>
+            <g id="i-shield" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/>
+            </g>
+            <g id="i-flask" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6M10 9V3h4v6l5.5 9.5A1 1 0 0 1 18.6 20H5.4a1 1 0 0 1-.9-1.5L10 9ZM7.5 15h9"/>
+            </g>
+            <g id="i-briefcase" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="14" x="2" y="7" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M2 12h20M10 12v2h4v-2"/>
+            </g>
+            <g id="i-server" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="6" x="2" y="3" rx="2"/><rect width="20" height="6" x="2" y="15" rx="2"/><path d="M6 6h.01M6 18h.01M10 6h8M10 18h8"/>
+            </g>
+            <g id="i-orbit" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/><path d="M3.6 8.8c3.6 2.1 8.8 5.1 16.8 6.4M20.4 8.8C16.8 10.9 11.6 13.9 3.6 15.2"/>
+            </g>
+            <g id="i-bot" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <rect width="18" height="14" x="3" y="7" rx="2"/><path d="M12 3v4M8 12h.01M16 12h.01M8 17h8M1 12h2M21 12h2"/>
+            </g>
+            <g id="i-code" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/>
+            </g>
+            <g id="i-trending" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="m3 17 6-6 4 4 8-8M14 7h7v7"/>
+            </g>
+            <g id="i-newspaper" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 22h16a2 2 0 0 0 2-2V4H8v16a2 2 0 0 1-4 0V6H2v14a2 2 0 0 0 2 2Z"/><path d="M12 8h6M12 12h6M12 16h6"/>
+            </g>
         </defs>
     </svg>
 
     <header class="appbar">
         <div class="shell appbar__inner">
             <div class="brand">
-                <span class="brand__mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><use href="#i-signal"/></svg>
-                </span>
-                <span class="brand__text">
-                    <span class="brand__name">High Signal</span>
-                    <span class="brand__meta">
-                        <!-- data-state: live | syncing | stale | offline. The dot
-                             stops claiming "live" the moment polling fails. -->
-                        <span class="pulse" id="statusDot" data-state="syncing" aria-hidden="true"></span>
-                        <span id="lastUpdated">syncing…</span>
-                        <span class="brand__dot" aria-hidden="true">·</span>
-                        <span id="nextSync">—</span>
-                    </span>
-                </span>
+                <span class="brand__name">High Signal</span>
+                <span class="brand__tagline">AI-relevant news from the sources you trust.</span>
             </div>
 
             <div class="search">
                 <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
                 <input id="search" class="input" type="search" autocomplete="off"
-                       placeholder="Filter headlines…" aria-label="Filter headlines">
+                       placeholder="Search headlines, topics, or sources…" aria-label="Filter headlines">
                 <kbd class="search__kbd">/</kbd>
             </div>
 
-            <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
-                    title="Some sources are not returning headlines">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
-                <span id="healthCount">0 failing</span>
-            </button>
+            <div class="appbar__actions">
+                <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
+                        title="Some sources are not returning headlines">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
+                    <span id="healthCount">0 failing</span>
+                </button>
 
-            <button id="sourcesBtn" class="btn btn--outline btn--icon"
-                    title="Manage sources" aria-label="Manage sources"
-                    aria-haspopup="dialog">
-                <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
-            </button>
+                <button id="sourcesBtn" class="btn btn--outline btn--icon"
+                        title="Manage sources" aria-label="Manage sources"
+                        aria-haspopup="dialog">
+                    <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
+                </button>
 
-            <button id="refreshBtn" class="btn btn--solid btn--icon" title="Re-scrape sources (r)"
-                    aria-label="Re-scrape sources">
-                <svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
-            </button>
+                <button id="refreshBtn" class="btn btn--solid btn--icon" title="Re-scrape sources (r)"
+                        aria-label="Re-scrape sources">
+                    <svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+                </button>
 
-            <button id="helpBtn" class="btn btn--outline btn--icon" title="Keyboard shortcuts (?)"
-                    aria-label="Keyboard shortcuts" aria-haspopup="dialog">
-                <svg viewBox="0 0 24 24"><use href="#i-help"/></svg>
-            </button>
+                <button id="helpBtn" class="btn btn--outline btn--icon" title="Keyboard shortcuts (?)"
+                        aria-label="Keyboard shortcuts" aria-haspopup="dialog">
+                    <svg viewBox="0 0 24 24"><use href="#i-help"/></svg>
+                </button>
 
-            <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
-                <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
-            </button>
+                <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
+                    <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
+                </button>
+            </div>
         </div>
 
         <!-- Determinate progress for the background scrape. A full pass takes
@@ -220,37 +285,41 @@
     </div>
 
     <main class="shell">
-        <div class="toolbar">
-            <p class="toolbar__count" id="resultCount" role="status" aria-live="polite"></p>
+        <section class="pagehead" aria-labelledby="pageTitle">
+            <div class="pagehead__intro">
+                <h1 class="pagehead__title" id="pageTitle">Today’s AI Signal</h1>
+                <p class="toolbar__count" id="resultCount" role="status" aria-live="polite"></p>
+            </div>
 
-            <div class="segment" id="viewSwitch" role="radiogroup" aria-label="Layout">
+            <div class="toolbar">
+              <div class="segment" id="viewSwitch" role="radiogroup" aria-label="Layout">
                 <button class="segment__item" role="radio" aria-checked="true"  data-view="feed">Feed</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-view="sources">Sources</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-view="categories">Categories</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-view="saved">Saved</button>
-            </div>
+              </div>
 
             <!-- Feed-only: the flat stream is the one view where ordering is a
                  choice rather than a consequence of the grouping. -->
-            <div class="segment" id="sortSwitch" role="radiogroup" aria-label="Feed order" hidden>
+              <div class="segment" id="sortSwitch" role="radiogroup" aria-label="Feed order" hidden>
                 <button class="segment__item" role="radio" aria-checked="true"  data-sort="score">Top</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-sort="recent">New</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-sort="mixed">Mixed</button>
-            </div>
+              </div>
 
-            <div class="segment" id="scoreSwitch" role="radiogroup" aria-label="Minimum signal score">
+              <div class="segment" id="scoreSwitch" role="radiogroup" aria-label="Minimum signal score">
                 <button class="segment__item" role="radio" aria-checked="true"  data-score="0">All</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-score="60">60+</button>
                 <button class="segment__item" role="radio" aria-checked="false" data-score="75">75+</button>
-            </div>
+              </div>
 
-            <button id="unreadBtn" class="btn btn--outline btn--sm" aria-pressed="false"
+              <button id="unreadBtn" class="btn btn--outline btn--sm" aria-pressed="false"
                     title="Show unread only (u)">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-unread"/></svg>
                 Unread
-            </button>
+              </button>
 
-            <div class="menu">
+              <div class="menu">
                 <button id="exportBtn" class="btn btn--outline btn--sm" aria-expanded="false"
                         aria-haspopup="menu">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
@@ -275,14 +344,15 @@
                         RSS feed
                     </a>
                 </div>
-            </div>
+              </div>
 
-            <button id="markReadBtn" class="btn btn--ghost btn--sm" title="Mark everything visible as read">
+              <button id="markReadBtn" class="btn btn--ghost btn--sm" title="Mark everything visible as read">
                 Mark read
-            </button>
+              </button>
 
-            <button id="clearBtn" class="btn btn--ghost btn--sm" hidden>Clear filters</button>
-        </div>
+              <button id="clearBtn" class="btn btn--ghost btn--sm" hidden>Clear filters</button>
+            </div>
+        </section>
 
         <!-- Active filters, each removable. Without this a filter set from a
              chip or a stat tile is invisible and feels like missing data. -->
@@ -294,6 +364,15 @@
 
         <div class="grid" id="grid" data-view="feed" tabindex="-1"></div>
     </main>
+
+    <footer class="sitefooter">
+        <div class="shell sitefooter__inner">
+            <span class="pulse" id="statusDot" data-state="syncing" aria-hidden="true"></span>
+            <span id="lastUpdated">syncing…</span>
+            <span class="sitefooter__sep" aria-hidden="true">·</span>
+            <span id="nextSync">—</span>
+        </div>
+    </footer>
 
     <dialog class="dialog dialog--wide" id="sourcesDialog" aria-labelledby="sourcesTitle">
         <header class="dialog__header">
