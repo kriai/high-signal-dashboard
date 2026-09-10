@@ -55,7 +55,17 @@ jobs:
           CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
           CLOUDFLARE_D1_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_API_TOKEN }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          SCRAPE_REPORT_PATH: scrape-report.json
         run: python scrape_job.py
+
+      - name: Upload source diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-source-diagnostics-${{ github.run_id }}
+          path: scrape-report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Recover queued source-tool jobs
         if: ${{ env.STATE_BACKEND == 'd1' }}
