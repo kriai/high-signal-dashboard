@@ -26,6 +26,14 @@
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
     <link rel="alternate" type="application/rss+xml" title="High Signal" href="/feed.xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Three families in one request. Newsreader is the variable cut, with
+         the opsz axis intact so headlines optically size themselves; Plex Sans
+         and Plex Mono ship only the weights the stylesheets actually ask for
+         (400/500/600 and 400/500 plus the italic the estimated-age style
+         needs). -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=Newsreader:opsz,wght@6..72,400..600&amp;display=swap">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/park.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
@@ -89,6 +97,16 @@
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
             </g>
+            <g id="i-pin" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 17v5"/>
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
+            </g>
+            <g id="i-pin-on" fill="currentColor" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 17v5"/>
+                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>
+            </g>
             <g id="i-x" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M18 6 6 18M6 6l12 12"/>
@@ -102,6 +120,11 @@
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M20 7h-9M14 17H5"/>
                 <circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>
+            </g>
+            <g id="i-sliders-h" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3"/>
+                <path d="M14 2v4M8 10v4M16 18v4"/>
             </g>
             <g id="i-clock" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
@@ -128,6 +151,10 @@
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
             </g>
+            <g id="i-upload" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 8l5-5 5 5M12 3v12"/>
+            </g>
             <g id="i-rss" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 11a9 9 0 0 1 9 9M4 4a16 16 0 0 1 16 16"/>
@@ -150,57 +177,118 @@
         </defs>
     </svg>
 
+    <!-- Masthead, view nav, search. Everything that is not one of those three is
+         an occasional errand and lives behind an icon or the overflow menu, so
+         the reading surface below starts with the headlines. -->
     <header class="appbar">
         <div class="shell appbar__inner">
             <div class="brand">
-                <span class="brand__mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><use href="#i-signal"/></svg>
-                </span>
-                <span class="brand__text">
-                    <span class="brand__name">High Signal</span>
-                    <span class="brand__meta">
-                        <!-- data-state: live | syncing | stale | offline. The dot
-                             stops claiming "live" the moment polling fails. -->
-                        <span class="pulse" id="statusDot" data-state="syncing" aria-hidden="true"></span>
-                        <span id="lastUpdated">syncing…</span>
-                        <span class="brand__dot" aria-hidden="true">·</span>
-                        <span id="nextSync">—</span>
-                    </span>
-                </span>
+                <a class="brand__name" href="/">High Signal</a>
+
+                <nav class="viewnav" id="viewSwitch" role="radiogroup" aria-label="View">
+                    <button class="viewnav__item" role="radio" aria-checked="true"  data-view="feed">Feed</button>
+                    <button class="viewnav__item" role="radio" aria-checked="false" data-view="categories">Categories</button>
+                    <button class="viewnav__item" role="radio" aria-checked="false" data-view="sources">Sources</button>
+                    <button class="viewnav__item" role="radio" aria-checked="false" data-view="saved">Saved</button>
+                </nav>
             </div>
 
             <div class="search">
                 <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
                 <input id="search" class="input" type="search" autocomplete="off"
-                       placeholder="Filter headlines…" aria-label="Filter headlines">
+                       placeholder="Search the feed…" aria-label="Filter headlines">
                 <kbd class="search__kbd">/</kbd>
             </div>
 
-            <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
-                    title="Some sources are not returning headlines">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
-                <span id="healthCount">0 failing</span>
-            </button>
+            <div class="appbar__actions">
+                <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
+                        title="Some sources are not returning headlines">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
+                    <span id="healthCount">0 failing</span>
+                </button>
 
-            <button id="sourcesBtn" class="btn btn--outline btn--icon"
-                    title="Manage sources" aria-label="Manage sources"
-                    aria-haspopup="dialog">
-                <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
-            </button>
+                <button id="sourcesBtn" class="btn btn--outline btn--icon"
+                        title="Manage sources" aria-label="Manage sources"
+                        aria-haspopup="dialog">
+                    <svg viewBox="0 0 24 24"><use href="#i-sliders"/></svg>
+                </button>
 
-            <button id="refreshBtn" class="btn btn--solid btn--icon" title="Re-scrape sources (r)"
-                    aria-label="Re-scrape sources">
-                <svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
-            </button>
+                <button id="refreshBtn" class="btn btn--solid btn--icon" title="Re-scrape sources (r)"
+                        aria-label="Re-scrape sources">
+                    <svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+                </button>
 
-            <button id="helpBtn" class="btn btn--outline btn--icon" title="Keyboard shortcuts (?)"
-                    aria-label="Keyboard shortcuts" aria-haspopup="dialog">
-                <svg viewBox="0 0 24 24"><use href="#i-help"/></svg>
-            </button>
+                <!-- What is left in the overflow: the one-shot actions. The two
+                     controls that change what the page shows -- the score floor
+                     and unread-only -- are filters, so they sit in the view head
+                     below, where the reader can see whether they are on. -->
+                <div class="menu">
+                    <button id="moreBtn" class="btn btn--outline btn--icon" aria-expanded="false"
+                            aria-haspopup="menu" title="Reading tools" aria-label="Reading tools">
+                        <svg viewBox="0 0 24 24"><use href="#i-sliders-h"/></svg>
+                    </button>
+                    <div class="menu__list card" id="moreMenu" hidden>
+                        <div class="menu__group menu__group--first" role="menu" aria-label="Reading">
+                            <button class="menu__item" role="menuitem" id="markReadBtn">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>
+                                Mark everything shown as read
+                            </button>
+                        </div>
 
-            <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
-                <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
-            </button>
+                        <div class="menu__group" role="menu" aria-label="Export">
+                            <button class="menu__item" role="menuitem" data-export="copy">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
+                                Copy visible links
+                            </button>
+                            <button class="menu__item" role="menuitem" data-export="markdown">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
+                                Copy as Markdown
+                            </button>
+                            <a class="menu__item" role="menuitem" href="/api/export.json">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+                                Download JSON
+                            </a>
+                            <a class="menu__item" role="menuitem" href="/feed.xml" target="_blank" rel="noopener">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rss"/></svg>
+                                RSS feed
+                            </a>
+                        </div>
+
+                        <!-- Saved, read, hidden and pinned state lives in this
+                             browser under this hostname. Moving the site to a
+                             new address would otherwise leave it behind, so it
+                             travels as a file. -->
+                        <div class="menu__group" role="menu" aria-label="Reading state">
+                            <button class="menu__item" role="menuitem" data-state="export">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
+                                Save reading state to a file
+                            </button>
+                            <button class="menu__item" role="menuitem" data-state="import">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-upload"/></svg>
+                                Load reading state from a file
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <input type="file" id="stateFile" accept="application/json,.json" hidden>
+
+                <button id="helpBtn" class="btn btn--outline btn--icon" title="Keyboard shortcuts (?)"
+                        aria-label="Keyboard shortcuts" aria-haspopup="dialog">
+                    <svg viewBox="0 0 24 24"><use href="#i-help"/></svg>
+                </button>
+
+                <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
+                    <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Below 60rem the category index cannot be a column, so it becomes
+             this: the same list, in the same order, one control tall. -->
+        <div class="jumpbar" id="jumpBar" hidden>
+            <label class="jumpbar__label" for="jump">Jump to category</label>
+            <select class="jumpbar__select" id="jump"></select>
+            <svg class="jumpbar__caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg>
         </div>
 
         <!-- Determinate progress for the background scrape. A full pass takes
@@ -220,80 +308,80 @@
     </div>
 
     <main class="shell">
-        <div class="toolbar">
-            <p class="toolbar__count" id="resultCount" role="status" aria-live="polite"></p>
+        <!-- The view already names itself in the nav above, so the title is here
+             for the document outline and for screen readers only: printing it
+             again at 38px cost a third of the first screen and told the reader
+             nothing they had not just clicked. -->
+        <h1 class="visually-hidden" id="viewTitle">The feed</h1>
 
-            <div class="segment" id="viewSwitch" role="radiogroup" aria-label="Layout">
-                <button class="segment__item" role="radio" aria-checked="true"  data-view="feed">Feed</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-view="sources">Sources</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-view="categories">Categories</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-view="saved">Saved</button>
+        <!-- Not painted either, but still a live region: it is the only thing
+             that tells someone using a screen reader how many headlines a
+             search or a filter just left behind. -->
+        <p class="visually-hidden" id="resultCount" role="status" aria-live="polite"></p>
+
+        <!-- All that is left of the head, and only on the feed: the ordering
+             choice, which is the one thing no other view has. -->
+        <div class="viewhead" id="viewHead" data-view="feed">
+            <div class="tabs" id="sortSwitch" role="radiogroup" aria-label="Feed order">
+                <button class="tabs__item" role="radio" aria-checked="true"  data-sort="score">Top signal</button>
+                <button class="tabs__item" role="radio" aria-checked="false" data-sort="recent">Latest</button>
+                <button class="tabs__item" role="radio" aria-checked="false" data-sort="mixed">Mixed</button>
             </div>
 
-            <!-- Feed-only: the flat stream is the one view where ordering is a
-                 choice rather than a consequence of the grouping. -->
-            <div class="segment" id="sortSwitch" role="radiogroup" aria-label="Feed order" hidden>
-                <button class="segment__item" role="radio" aria-checked="true"  data-sort="score">Top</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-sort="recent">New</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-sort="mixed">Mixed</button>
-            </div>
+            <!-- Active filters, each removable, and on this row rather than a
+                 band of their own: a filter set from a headline's topic link is
+                 invisible without them, but it is still part of the same one
+                 bar that says what the page is currently showing. -->
+            <div class="filters" id="filters" hidden aria-label="Active filters"></div>
 
-            <div class="segment" id="scoreSwitch" role="radiogroup" aria-label="Minimum signal score">
-                <button class="segment__item" role="radio" aria-checked="true"  data-score="0">All</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-score="60">60+</button>
-                <button class="segment__item" role="radio" aria-checked="false" data-score="75">75+</button>
-            </div>
-
-            <button id="unreadBtn" class="btn btn--outline btn--sm" aria-pressed="false"
-                    title="Show unread only (u)">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-unread"/></svg>
-                Unread
-            </button>
-
-            <div class="menu">
-                <button id="exportBtn" class="btn btn--outline btn--sm" aria-expanded="false"
-                        aria-haspopup="menu">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
-                    Export
-                    <svg class="menu__caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg>
-                </button>
-                <div class="menu__list card" id="exportMenu" role="menu" hidden>
-                    <button class="menu__item" role="menuitem" data-export="copy">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
-                        Copy visible links
-                    </button>
-                    <button class="menu__item" role="menuitem" data-export="markdown">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-copy"/></svg>
-                        Copy as Markdown
-                    </button>
-                    <a class="menu__item" role="menuitem" href="/api/export.json">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-download"/></svg>
-                        Download JSON
-                    </a>
-                    <a class="menu__item" role="menuitem" href="/feed.xml" target="_blank" rel="noopener">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-rss"/></svg>
-                        RSS feed
-                    </a>
+            <!-- The two filters, in the open. Both narrow every view, so they
+                 stay on this row when the ordering tabs beside them do not. -->
+            <div class="viewtools">
+                <span class="viewtools__label" id="scoreLabel">Min signal</span>
+                <div class="segment segment--sm" id="scoreSwitch" role="radiogroup"
+                     aria-labelledby="scoreLabel">
+                    <button class="segment__item" role="radio" aria-checked="true"  data-score="0">All</button>
+                    <button class="segment__item" role="radio" aria-checked="false" data-score="60">60+</button>
+                    <button class="segment__item" role="radio" aria-checked="false" data-score="75">75+</button>
                 </div>
+
+                <button type="button" class="btn btn--sm btn--outline toggle" id="unreadBtn"
+                        role="checkbox" aria-checked="false" title="Show unread only (u)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-unread"/></svg>
+                    Unread only
+                </button>
             </div>
-
-            <button id="markReadBtn" class="btn btn--ghost btn--sm" title="Mark everything visible as read">
-                Mark read
-            </button>
-
-            <button id="clearBtn" class="btn btn--ghost btn--sm" hidden>Clear filters</button>
         </div>
 
-        <!-- Active filters, each removable. Without this a filter set from a
-             chip or a stat tile is invisible and feels like missing data. -->
-        <div class="filters" id="filters" hidden aria-label="Active filters"></div>
 
         <!-- Polling never swaps the list under the cursor; new headlines wait
              behind this. -->
         <button class="newpill" id="newPill" hidden></button>
 
-        <div class="grid" id="grid" data-view="feed" tabindex="-1"></div>
+        <!-- Two columns in the category view, one everywhere else. The index is
+             a real column rather than a strip of chips because it is also the
+             page's table of contents. -->
+        <div class="reading" id="reading" data-index="off">
+            <aside class="catindex" id="catIndex" hidden>
+                <p class="catindex__label">Categories</p>
+                <nav class="catindex__nav" id="catIndexNav" aria-label="Categories"></nav>
+                <p class="catindex__note">
+                    Four stories per topic.<br>Expand any section to read more.
+                </p>
+            </aside>
+
+            <div class="grid" id="grid" data-view="feed" tabindex="-1"></div>
+        </div>
     </main>
+
+    <footer class="sitefooter">
+        <div class="shell sitefooter__inner">
+            <span class="pulse" id="statusDot" data-state="syncing" aria-hidden="true"></span>
+            <span id="lastUpdated">syncing…</span>
+            <span class="sitefooter__sep" aria-hidden="true">·</span>
+            <span id="nextSync">—</span>
+        </div>
+    </footer>
 
     <dialog class="dialog dialog--wide" id="sourcesDialog" aria-labelledby="sourcesTitle">
         <header class="dialog__header">
@@ -305,6 +393,17 @@
         </header>
 
         <div class="dialog__body">
+            <div class="ownerbar">
+                <label class="field ownerbar__field">
+                    <span class="field__label">Owner token</span>
+                    <input class="input" id="adminToken" type="password"
+                           autocomplete="off" spellcheck="false"
+                           placeholder="Required to change or test sources">
+                </label>
+                <p class="dialog__note" id="adminStatus">
+                    Public source health is visible. Owner actions require the token for this session.
+                </p>
+            </div>
             <details class="addsource" id="addSource">
                 <summary class="addsource__summary">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-plus"/></svg>
@@ -378,7 +477,7 @@
         </div>
 
         <footer class="dialog__footer">
-            <span class="dialog__note">Changes are written to <code>sources.json</code>.</span>
+            <span class="dialog__note">Cloudflare changes apply to the next scheduled publication.</span>
             <button class="btn btn--outline btn--sm" id="refreshFromDialog">Re-scrape now</button>
         </footer>
     </dialog>
@@ -399,7 +498,7 @@
                 <div class="keys__row"><dt><kbd>m</kbd></dt><dd>Toggle read / unread</dd></div>
                 <div class="keys__row"><dt><kbd>x</kbd></dt><dd>Hide this headline</dd></div>
                 <div class="keys__row"><dt><kbd>u</kbd></dt><dd>Unread only</dd></div>
-                <div class="keys__row"><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Feed, Sources, Categories, Saved</dd></div>
+                <div class="keys__row"><dt><kbd>1</kbd>–<kbd>4</kbd></dt><dd>Feed, Categories, Sources, Saved</dd></div>
                 <div class="keys__row"><dt><kbd>/</kbd></dt><dd>Search</dd></div>
                 <div class="keys__row"><dt><kbd>r</kbd></dt><dd>Re-scrape sources</dd></div>
                 <div class="keys__row"><dt><kbd>g</kbd></dt><dd>Manage sources</dd></div>

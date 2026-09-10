@@ -2,35 +2,43 @@
    Park UI design system (https://park-ui.com), ported to plain CSS.
 
    Park UI ships as Ark UI + Panda CSS for React/Solid/Vue, which this Flask +
-   Jinja app has no build step for. So the tokens below are lifted verbatim from
-   @park-ui/panda-preset: Radix 12-step colour scales, the bg/fg/border semantic
-   token map, the l1/l2/l3 radius nesting, the shadow scale and the text styles.
+   Jinja app has no build step for. So the structure below is taken from
+   @park-ui/panda-preset: 12-step colour scales, the bg/fg/border semantic token
+   map, the l1/l2/l3 radius nesting, the shadow scale and the text styles.
    Component classes follow Park UI's recipes (button, badge, card, input).
 
-   Theme: accent "iris", gray "slate" (Radix's natural pairing), radius "md".
+   The two colour scales are the one place this departs from the preset. The
+   reader is meant to read like paper, so "slate" (a blue-cool gray) is replaced
+   by a warm ivory gray built around the page colour #faf9f6, its rules #dedfd7
+   and its ink #262823; "iris" is replaced by a single muted blue, #436581, that
+   marks links and the current thing and never competes with a headline. Both
+   keep Radix's step semantics -- 1/2 surfaces, 3-5 component fills, 6-8 borders,
+   9/10 solid, 11 accessible text, 12 ink -- so every recipe below is unchanged.
+
+   Theme: accent "muted blue", gray "warm ivory", radius "md".
 --------------------------------------------------------------------------- */
 
 /* == Tokens: light ======================================================== */
 :root,
 [data-theme='light'] {
-  --gray-1: #fcfcfd;  --gray-2: #f9f9fb;  --gray-3: #f0f0f3;
-  --gray-4: #e8e8ec;  --gray-5: #e0e1e6;  --gray-6: #d9d9e0;
-  --gray-7: #cdced6;  --gray-8: #b9bbc6;  --gray-9: #8b8d98;
-  --gray-10: #80838d; --gray-11: #60646c; --gray-12: #1c2024;
-  --gray-a2: #00005506; --gray-a3: #0000330f; --gray-a5: #0009321f;
-  --gray-a7: #00062e32; --gray-a9: #00051d74;
+  --gray-1: #fcfcf9;  --gray-2: #f7f7f1;  --gray-3: #f1f1ea;
+  --gray-4: #eaeae1;  --gray-5: #e4e4da;  --gray-6: #dedfd7;
+  --gray-7: #d1d2c7;  --gray-8: #bbbcaf;  --gray-9: #8d8f84;
+  --gray-10: #83857a; --gray-11: #64665c; --gray-12: #262823;
+  --gray-a2: #55550006; --gray-a3: #3333000f; --gray-a5: #3232091f;
+  --gray-a7: #2e2e0632; --gray-a9: #1d1d0574;
 
-  --accent-1: #fdfdff;  --accent-2: #f8f8ff;  --accent-3: #f0f1fe;
-  --accent-4: #e6e7ff;  --accent-6: #cbcdff;  --accent-7: #b8baf8;
-  --accent-9: #5b5bd6;  --accent-10: #5151cd; --accent-11: #5753c6;
-  --accent-a2: #0000ff07; --accent-a3: #0011ee0f; --accent-a7: #0008e647;
+  --accent-1: #fbfcfd;  --accent-2: #f4f8fa;  --accent-3: #e9eff4;
+  --accent-4: #dce7ee;  --accent-6: #c1d2df;  --accent-7: #a6c0d2;
+  --accent-9: #436581;  --accent-10: #3a5870; --accent-11: #3b5f7c;
+  --accent-a2: #0077bb07; --accent-a3: #00558f0f; --accent-a7: #00447e47;
 
-  --jade-3: #e6f7ed;  --jade-6: #acdec8;  --jade-9: #29a383;  --jade-11: #208368;
-  --amber-3: #fff7c2; --amber-6: #f3d673; --amber-9: #ffc53d; --amber-11: #ab6400;
-  --red-3: #feebec;   --red-6: #fdbdbe;   --red-9: #e5484d;   --red-11: #ce2c31;
+  --jade-3: #e5f5ec;  --jade-6: #a9dbc6;  --jade-9: #2a9a7d;  --jade-11: #1f7c63;
+  --amber-3: #fbf3cf; --amber-6: #ecd07f; --amber-9: #e2a12b; --amber-11: #96601a;
+  --red-3: #fbeae9;   --red-6: #f2bcb8;   --red-9: #c8514c;   --red-11: #ab3a35;
 
-  --bg-canvas: var(--gray-1);
-  --bg-default: #ffffff;
+  --bg-canvas: #faf9f6;
+  --bg-default: #fffefa;
   --bg-subtle: var(--gray-2);
   --bg-muted: var(--gray-3);
   --bg-emphasized: var(--gray-4);
@@ -44,21 +52,21 @@
 
 /* == Tokens: dark ========================================================= */
 [data-theme='dark'] {
-  --gray-1: #111113;  --gray-2: #18191b;  --gray-3: #212225;
-  --gray-4: #272a2d;  --gray-5: #2e3135;  --gray-6: #363a3f;
-  --gray-7: #43484e;  --gray-8: #5a6169;  --gray-9: #696e77;
-  --gray-10: #777b84; --gray-11: #b0b4ba; --gray-12: #edeef0;
-  --gray-a2: #d8f4f609; --gray-a3: #ddeaf814; --gray-a5: #d9edfe25;
-  --gray-a7: #d9edff40; --gray-a9: #dfebfd6d;
+  --gray-1: #141412;  --gray-2: #1b1b18;  --gray-3: #232320;
+  --gray-4: #2a2a26;  --gray-5: #31312c;  --gray-6: #3a3a34;
+  --gray-7: #474740;  --gray-8: #5f5f56; --gray-9: #6f6f65;
+  --gray-10: #7d7d73; --gray-11: #b4b4a9; --gray-12: #efefe8;
+  --gray-a2: #f6f6d409; --gray-a3: #faf4d814; --gray-a5: #fdf7d925;
+  --gray-a7: #fffbe040; --gray-a9: #fdfae76d;
 
-  --accent-1: #13131e;  --accent-2: #171625;  --accent-3: #202248;
-  --accent-4: #262a65;  --accent-6: #3d3e82;  --accent-7: #4a4a95;
-  --accent-9: #5b5bd6;  --accent-10: #6e6ade; --accent-11: #b1a9ff;
-  --accent-a2: #564bf916; --accent-a3: #525bff3b; --accent-a7: #7777fe8e;
+  --accent-1: #10151a;  --accent-2: #141b21;  --accent-3: #1a2833;
+  --accent-4: #1e3341;  --accent-6: #2d4a5e;  --accent-7: #375c75;
+  --accent-9: #547f9e;  --accent-10: #6291b2; --accent-11: #9ec4dc;
+  --accent-a2: #4ba7f916; --accent-a3: #52a9ff3b; --accent-a7: #77c3fe8e;
 
-  --jade-3: #0f2e22;  --jade-6: #1b5745;  --jade-9: #29a383;  --jade-11: #1fd8a4;
-  --amber-3: #302008; --amber-6: #5c3d05; --amber-9: #ffc53d; --amber-11: #ffca16;
-  --red-3: #3b1219;   --red-6: #72232d;   --red-9: #e5484d;   --red-11: #ff9592;
+  --jade-3: #0f2b21;  --jade-6: #1b5344;  --jade-9: #2fa384;  --jade-11: #46d2a9;
+  --amber-3: #2d2109; --amber-6: #573e10; --amber-9: #e2a12b; --amber-11: #e8bb56;
+  --red-3: #351718;   --red-6: #68302e;   --red-9: #cf5c56;   --red-11: #eb9a95;
 
   --bg-canvas: var(--gray-1);
   --bg-default: var(--gray-2);
@@ -94,9 +102,15 @@
   --radius-l3: 0.75rem;
   --radius-full: 9999px;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif,
-    'Apple Color Emoji', 'Segoe UI Emoji';
+  /* Park UI's own stack, fronted by this app's interface face. --font-mono is
+     an addition: Park has no monospace token, and the dashboard needs one for
+     scores and machine metadata. Both are safe to swap wholesale -- see the
+     type system at the top of app.css. */
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+    Consolas, 'Liberation Mono', 'Courier New', monospace;
 
   --duration-fast: 100ms;
   --duration-normal: 150ms;
@@ -160,7 +174,7 @@ svg { display: block; }
   background: transparent;
   font-size: 0.875rem;
   line-height: 1.25rem;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
@@ -214,6 +228,7 @@ svg { display: block; }
   font-size: 0.75rem;
   line-height: 1.125rem;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   user-select: none;
 }
@@ -245,6 +260,7 @@ svg { display: block; }
   border-radius: var(--radius-l2);
   background: var(--bg-default);
   color: var(--fg-default);
+  font-family: var(--font-sans);
   font-size: 0.875rem;
   line-height: 1.25rem;
   transition: border-color var(--duration-normal) var(--ease-default),
@@ -287,9 +303,16 @@ svg { display: block; }
 
 .segment__item:hover { color: var(--fg-default); }
 
+/* The toolbar cut, sized to share a row with .btn--sm. */
+.segment--sm { height: 2.25rem; padding: 0.1875rem; }
+.segment--sm .segment__item {
+  height: 1.875rem;
+  padding-inline: 0.625rem;
+  font-size: 0.8125rem;
+}
+
 .segment__item[aria-checked='true'] {
   background: var(--bg-default);
   color: var(--fg-default);
-  font-weight: 600;
   box-shadow: var(--shadow-xs);
 }

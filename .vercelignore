@@ -9,4 +9,5 @@ __pycache__
 # only bloat the bundle.
 cache.json
 health.json
+summaries.json
 *.tmp

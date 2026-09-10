@@ -1,5 +1,5 @@
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, FeatureNotFound
 import cloudscraper
 import feedparser
 
@@ -387,6 +387,18 @@ def is_challenge_page(html):
 
 SUMMARY_LIMIT = 280
 
+# A summary is two sentences off the top of a document, so there is no reason
+# to download the rest of it. Everything the meta path wants is inside <head>,
+# so the read stops there rather than at some byte count picked in advance --
+# across 36 sampled article pages the head closed at a median of 24 KB while
+# the pages themselves averaged 329 KB.
+#
+# A flat cap cannot do as well in both directions: 256 KB would still read 163
+# KB per page on average and miss the two pages that bury og:description at
+# 398 KB and 687 KB. Stopping at </head> reads 136 KB and misses none.
+SUMMARY_HEAD_LEAD = 64 * 1024    # kept past </head> for the body fallback
+SUMMARY_FETCH_LIMIT = 768 * 1024  # hard stop for a page with no usable head
+
 SUMMARY_META_SELECTORS = (
     ('meta[property="og:description"]', 'content'),
     ('meta[name="description"]', 'content'),
@@ -401,6 +413,56 @@ SUMMARY_SKIP_PATTERNS = re.compile(
 SUMMARY_SENTENCE = re.compile(r'(?<=[.!?])\s+(?=[A-Z0-9"\'])')
 
 LEGACY_SUMMARY_PREFIX = 'Headline picked up from '
+
+
+def parse_summary_html(markup):
+    """lxml where it is available, which is everywhere this project runs.
+
+    Only the summary path uses it. The listing scrape stays on `html.parser`,
+    because the two parsers disagree about malformed markup and every selector
+    in sources.json was written against that behaviour.
+    """
+    try:
+        return BeautifulSoup(markup, 'lxml')
+    except FeatureNotFound:
+        return BeautifulSoup(markup, 'html.parser')
+
+
+def read_capped(response, lead=SUMMARY_HEAD_LEAD, limit=SUMMARY_FETCH_LIMIT):
+    """Decode a streamed response up to `lead` bytes past </head>, then close it.
+
+    Requests falls back to ISO-8859-1 for `text/html` with no declared charset,
+    which mangles the curly quotes and dashes these summaries are full of. The
+    declared charset is honoured when there is one and UTF-8 assumed when there
+    is not, which is what the modern web actually serves.
+    """
+    buffer = bytearray()
+    head_end = None
+    scanned = 0
+
+    try:
+        for chunk in response.iter_content(16384):
+            buffer += chunk
+            if head_end is None:
+                # Only the new bytes are searched, less the six that a </head>
+                # straddling the chunk boundary could have started in.
+                start = max(0, scanned - 6)
+                found = bytes(buffer[start:]).lower().find(b'</head>')
+                scanned = len(buffer)
+                if found != -1:
+                    head_end = start + found + 7
+            if head_end is not None and len(buffer) >= head_end + lead:
+                break
+            if len(buffer) >= limit:
+                break
+    finally:
+        response.close()
+
+    raw = bytes(buffer[:limit])
+    declared = 'charset=' in response.headers.get('content-type', '').lower()
+    # errors='replace' covers the multi-byte character the cut lands inside of.
+    return raw.decode((response.encoding if declared else None) or 'utf-8',
+                      errors='replace')
 
 
 def is_generated_summary(summary):
@@ -734,9 +796,17 @@ def resolve_arxiv_title(item, title):
 
 
 class HighSignalScraper:
-    def __init__(self, sources_file='sources.json'):
-        data = store.read_json_seeded(sources_file) or {}
-        self.sources = data.get('sources', [])
+    def __init__(self, sources_file='sources.json', sources=None):
+        if sources is None:
+            try:
+                data = store.read_json_seeded(sources_file) or {}
+            except store.StoreUnavailable:
+                # Keep the web process bootable during a storage outage.
+                # D1/CI supplies sources explicitly and never takes this path.
+                with open(sources_file) as handle:
+                    data = json.load(handle)
+            sources = data.get('sources', [])
+        self.sources = list(sources)
         
         self.source_by_name = {s['name']: s for s in self.sources}
         # Source names visited by the most recent pass. A deadline-limited pass
@@ -897,19 +967,22 @@ class HighSignalScraper:
                 link,
                 headers={'User-Agent': random.choice(self.user_agents)},
                 timeout=timeout,
-                allow_redirects=True
+                allow_redirects=True,
+                stream=True
             )
+            if response.status_code != 200:
+                response.close()
+                return metadata_summary(article), 'metadata', \
+                    f'HTTP {response.status_code}'
+            html = read_capped(response)
         except Exception as exc:                            # noqa: BLE001
             return metadata_summary(article), 'metadata', (
                 f'{type(exc).__name__}: {str(exc)[:160]}')
 
-        if response.status_code != 200:
-            return metadata_summary(article), 'metadata', f'HTTP {response.status_code}'
-
-        if is_challenge_page(response.text):
+        if is_challenge_page(html):
             return metadata_summary(article), 'metadata', 'Blocked by a bot challenge'
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = parse_summary_html(html)
         title = article.get('title', '')
 
         summary = summary_from_meta(soup, title)
@@ -1150,7 +1223,7 @@ class HighSignalScraper:
                                     else previous.get('consecutive_failures', 0) + 1,
         }
 
-    def scrape_all(self, progress=None, deadline=None):
+    def scrape_all(self, progress=None, deadline=None, persist_health=True):
         """Scrape every enabled source.
 
         `progress(done, total, name)` is called before each source so the UI can
@@ -1222,7 +1295,8 @@ class HighSignalScraper:
         # scrape would look brand new again on the one after it.
         self.previous_by_id = {a['id']: a for a in unique_articles if a.get('id')}
         self.last_run = datetime.now().isoformat()
-        self.save_health()
+        if persist_health:
+            self.save_health()
 
         ok = sum(1 for h in self.health.values() if h['state'] == 'ok')
         print(f"\n✅ Scraped {len(unique_articles)} unique articles "
@@ -1307,6 +1381,13 @@ class HighSignalScraper:
         data = store.read_json(filename)
         if data is None:
             return []
+        if not isinstance(data, (dict, list)):
+            raise store.StoreUnavailable('Invalid article snapshot')
+        if isinstance(data, dict) and (
+                not isinstance(data.get('articles'), list) or
+                not isinstance(data.get('health', []), list) or
+                not parse_iso(data.get('generated_at'))):
+            raise store.StoreUnavailable('Invalid article snapshot')
 
         # v1 caches were a bare list of articles.
         if isinstance(data, list):
@@ -1315,6 +1396,14 @@ class HighSignalScraper:
             articles = data.get('articles', [])
             health = data.get('health', [])
             generated = data.get('generated_at')
+
+        if any(not isinstance(a, dict) or
+               not all(isinstance(a.get(k), str) and a[k]
+                       for k in ('id', 'title', 'source', 'link'))
+               for a in articles):
+            raise store.StoreUnavailable('Invalid article in snapshot')
+        if any(not isinstance(h, dict) or not h.get('name') for h in health):
+            raise store.StoreUnavailable('Invalid source health in snapshot')
 
         for article in articles:
             article.setdefault('first_seen', article.get('timestamp'))
@@ -1345,6 +1434,10 @@ class HighSignalScraper:
         return articles
 
     def save_health(self, filename='health.json'):
+        # Hosted health is already included in cache.json. It must not be a
+        # second upload or an independent writer of the scrape snapshot.
+        if store.is_remote():
+            return
         write_json_atomic(filename, {
             'checked_at': self.last_run or datetime.now().isoformat(),
             'sources': list(self.health.values()),
@@ -1381,6 +1474,9 @@ class HighSignalScraper:
                 }
             rows.append(dict(
                 row,
+                enabled=source.get('enabled', True) is not False,
+                state=('disabled' if source.get('enabled') is False else
+                       ('pending' if row['state'] == 'disabled' else row['state'])),
                 selector=source.get('selector', ''),
                 fallback=source.get('fallback', ''),
                 type=source.get('type', 'static'),
@@ -1389,7 +1485,15 @@ class HighSignalScraper:
         return rows
 
     def reload_sources(self, sources_file='sources.json'):
-        self.sources = (store.read_json_seeded(sources_file) or {}).get('sources', [])
+        data = store.read_json_seeded(sources_file)
+        if not isinstance(data, dict) or not isinstance(data.get('sources'), list):
+            raise store.StoreUnavailable('Invalid source configuration')
+        sources = data['sources']
+        if any(not isinstance(source, dict) or
+               not all(isinstance(source.get(k), str) and source[k]
+                       for k in ('name', 'url')) for source in sources):
+            raise store.StoreUnavailable('Invalid source configuration')
+        self.sources = sources
         self.source_by_name = {s['name']: s for s in self.sources}
 
     def get_high_signal_articles(self, min_score=80):

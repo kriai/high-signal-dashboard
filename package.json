@@ -1,0 +1,20 @@
+{
+  "name": "high-signal-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "python3 scripts/build_static.py",
+    "check": "tsc --noEmit && node --check static/js/dashboard.js",
+    "dev": "npm run build && wrangler dev",
+    "test": "node --experimental-strip-types --test worker/test/contracts.test.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260910.1",
+    "@types/node": "22.19.11",
+    "typescript": "7.0.2",
+    "wrangler": "4.130.0"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}
