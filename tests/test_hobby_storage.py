@@ -179,6 +179,17 @@ class HobbyStorageTests(unittest.TestCase):
             self.assertEqual(scrape_job.main(), 0)
         scrape.assert_called_once_with(warm=True)
 
+    def test_snapshot_stamped_ahead_of_this_clock_still_publishes(self):
+        # Timestamps are naive local time. A snapshot imported from a laptop
+        # ahead of UTC must not block a UTC runner until the clock catches up.
+        self.snapshot['generated_at'] = '2026-09-06T14:00:00'
+        with patch.object(app, 'datetime') as clock, \
+                patch.object(app, 'scrape_and_cache') as scrape:
+            clock.now.return_value = datetime(2026, 9, 6, 12, 30)
+            clock.fromisoformat.side_effect = datetime.fromisoformat
+            self.assertEqual(scrape_job.main(), 0)
+        scrape.assert_called_once_with(warm=True)
+
     def test_ci_missing_token_fails_without_scraping(self):
         with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true'}), \
                 patch.object(store, 'store', store.LocalStore()), \

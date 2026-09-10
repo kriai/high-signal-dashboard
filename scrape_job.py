@@ -57,7 +57,9 @@ def _run_legacy():
         interval = app.SCRAPE_INTERVAL_MINUTES * 60
         published_slot = int(app.last_scrape_at.timestamp() // interval)
         current_slot = int(app.datetime.now().timestamp() // interval)
-        if published_slot >= current_slot:
+        # Same slot only: a snapshot stamped ahead of this clock is skew, and
+        # refusing to publish until the clock catches up would be worse.
+        if published_slot == current_slot:
             print('⏭️  This half-hour already has a published snapshot; skipping')
             return 0
     before = len(app.cached_articles)
@@ -102,11 +104,15 @@ def _run_d1():
         # A workflow retry in the same slot should not create another
         # generation. Scheduled runs use off-peak :07/:37 once the workflow is
         # switched; compare wall-clock slots, not elapsed scrape duration.
+        # Only the same slot suppresses a run. Timestamps are naive local time,
+        # so a snapshot imported from a laptop ahead of UTC lands in a future
+        # slot on a UTC runner; treating that as "already published" would
+        # block CI until the clock caught up.
         previous_time = parse_iso((previous or {}).get('generated_at'))
         if previous_time is not None:
             from datetime import datetime
             interval = 30 * 60
-            if int(previous_time.timestamp() // interval) >= \
+            if int(previous_time.timestamp() // interval) == \
                     int(datetime.now().timestamp() // interval):
                 print('⏭️  This half-hour already has an active publication; skipping')
                 return 0
