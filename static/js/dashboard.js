@@ -272,6 +272,8 @@
         published: article.published || null,
         published_precision: article.published_precision || null,
         first_seen: article.first_seen || article.timestamp || null,
+        last_fetched_at: article.last_fetched_at || null,
+        is_stale: Boolean(article.is_stale),
         also_in: article.also_in || [],
         saved_at: new Date().toISOString()
       };
@@ -740,6 +742,9 @@
       'Source: ' + article.source,
       'Category: ' + categoryOf(article),
       article.summary_source ? 'Summary: ' + article.summary_source : null,
+      article.is_stale ? 'Source fetch failed; showing the last successful copy from ' +
+        (parseDate(article.last_fetched_at)
+          ? parseDate(article.last_fetched_at).toLocaleString() : 'an earlier run') : null,
       also.length ? 'Also carried by ' + also.join(', ') : null
     ].filter(Boolean);
 
@@ -776,6 +781,9 @@
     var id = escapeHtml(article.id);
     var expanded = state.expandedId === article.id;
     var saved = isSaved(article.id);
+    var stale = article.is_stale
+      ? '<span title="The latest source fetch failed; this is the last successful copy">stale copy</span>'
+      : '';
 
     return '<li class="row' + (opts.className ? ' ' + opts.className : '') + '"' +
       ' data-id="' + id + '"' +
@@ -790,7 +798,8 @@
           '<a class="row__link" href="' + escapeHtml(safeUrl(article.link)) + '"' +
           ' target="_blank" rel="noopener noreferrer" data-act="open">' +
           '<span class="row__title">' + highlight(article.title, query) + '</span></a>' +
-          '<p class="row__meta">' + (opts.meta || '') + '</p>' +
+          '<p class="row__meta">' + (opts.meta || '') +
+            ((opts.meta && stale) ? ' · ' : '') + stale + '</p>' +
         '</div>' +
         '<div class="row__tools">' +
           // The score no longer wears a badge. It is the quietest thing on the
@@ -1948,6 +1957,7 @@
             escapeHtml(row.tier) + ' tier · ' + row.count + ' cached · ' +
             escapeHtml(last) +
             (row.error ? ' · ' + escapeHtml(String(row.error).slice(0, 90)) : '') +
+            (row.retained_articles ? ' · showing ' + row.retained_articles + ' retained' : '') +
             (row.state === 'empty' ? ' · selector matched nothing' : '') +
           '</span>' +
           (row.selector ? '<code class="srow__selector">' +
@@ -2737,7 +2747,12 @@
       testSource({
         name: name, url: config.url, selector: config.selector,
         fallback: config.fallback, tier: config.tier, category: config.category,
-        type: config.type, feed_url: config.feed_url
+        type: config.type, feed_url: config.feed_url,
+        fetch_strategies: config.fetch_strategies,
+        retention_hours: config.retention_hours,
+        allow_empty: config.allow_empty,
+        allowed_hosts: config.allowed_hosts,
+        path_prefixes: config.path_prefixes
       }, target, trigger);
       return;
     }

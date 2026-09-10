@@ -5,6 +5,7 @@ from datetime import datetime
 from email.utils import format_datetime
 import hashlib
 import json
+import math
 import os
 import time
 from urllib.parse import urlparse
@@ -12,7 +13,8 @@ from xml.sax.saxutils import escape as xml_escape
 
 from d1_store import Document, Publication, D1Error
 from scraper import (CATEGORIES, HighSignalScraper, is_generated_summary,
-                     parse_iso)
+                     parse_iso, utc_now)
+from source_config import is_public_url
 
 
 SCORE_HIGH = 75
@@ -28,8 +30,17 @@ SUMMARY_FIELDS = ('summary', 'summary_source', 'summary_checked_at',
                   'summary_error')
 
 
+# A run that reached fewer than this share of the enabled sources is treated as
+# an outage rather than a refresh, so the previous publication stays active. It
+# is a starting product default, not a measurement; operators can move it with
+# SCRAPE_MIN_SOURCE_COVERAGE once shadow runs show what coverage is normal.
+DEFAULT_MIN_SOURCE_COVERAGE = 0.5
+
+
 def run_scrape(sources, previous=None, warm_limit=100, warm_min_score=SCORE_MID,
-               warm_budget_seconds=90, warm_workers=8):
+               warm_budget_seconds=90, warm_workers=8,
+               scrape_budget_seconds=600,
+               min_source_coverage=DEFAULT_MIN_SOURCE_COVERAGE):
     """Run the existing scraper without importing Flask or writing state."""
     scraper = HighSignalScraper(sources=sources)
     previous = previous or {}
@@ -43,20 +54,45 @@ def run_scrape(sources, previous=None, warm_limit=100, warm_min_score=SCORE_MID,
         row['name']: row for row in health if isinstance(row, dict) and row.get('name')
     }
     scraper.last_run = previous.get('generated_at')
+    if previous.get('scraper_state') is not None:
+        scraper.load_scraper_state(previous['scraper_state'])
+    else:
+        scraper._migrate_source_batches(articles, health)
 
-    scraped = scraper.scrape_all(persist_health=False)
+    scrape_deadline = (time.time() + max(1, scrape_budget_seconds)
+                       if scrape_budget_seconds is not None else None)
+    scraped = scraper.scrape_all(
+        deadline=scrape_deadline, persist_health=False)
     normalize_summaries(scraped)
-    _validate_run(scraper, scraped)
+    coverage = _coverage(scraper, min_source_coverage)
+    try:
+        _validate_run(scraped, coverage)
+    except D1Error as exc:
+        _write_run_report(scraper, scraped, coverage, str(exc))
+        raise
     warmed, attempted = warm_summaries(
         scraper, scraped, warm_limit, warm_min_score,
         warm_budget_seconds, warm_workers)
-    return {
+    result = {
         'version': 3,
         'generated_at': scraper.last_run,
         'articles': scraped,
         'health': list(scraper.health.values()),
+        'scraper_state': scraper.scraper_state_payload(),
+        'run_stats': dict(scraper.run_stats),
         'summary_warm': {'warmed': warmed, 'attempted': attempted},
     }
+    if (articles and len(scraped) < len(articles) / 2 and
+            {row.get('name') for row in health} ==
+            {source.get('name') for source in sources}):
+        result['warnings'] = [
+            f'Article count fell from {len(articles)} to {len(scraped)} '
+            'with the same configured source names']
+    else:
+        result['warnings'] = []
+    result['source_coverage'] = coverage
+    _write_run_report(scraper, scraped, coverage, None, result['warnings'])
+    return result
 
 
 def normalize_summaries(articles):
@@ -74,6 +110,7 @@ def warm_summaries(scraper, articles, limit=100, min_score=SCORE_MID,
                    budget_seconds=90, workers=8):
     targets = [article for article in articles
                if not article.get('summary')
+               and not article.get('is_stale')
                and article.get('signal_score', 0) >= min_score
                and _is_public_http_url(article.get('link') or '')]
     targets.sort(key=lambda article: article.get('signal_score', 0), reverse=True)
@@ -111,6 +148,7 @@ def prepare_publication(snapshot, sources, public_origin='https://high-signal.in
     generated_at = snapshot.get('generated_at')
     articles = snapshot.get('articles')
     health = snapshot.get('health')
+    scraper_state = snapshot.get('scraper_state') or {'version': 1, 'sources': {}}
     if not generated_at or not parse_iso(generated_at):
         raise D1Error('Snapshot generated_at is missing or invalid')
     if not isinstance(articles, list) or not isinstance(health, list):
@@ -120,11 +158,14 @@ def prepare_publication(snapshot, sources, public_origin='https://high-signal.in
         'generated_at': generated_at,
         'articles': articles,
         'health': health,
+        'scraper_state': scraper_state,
     })
     publication_id = 'pub-' + hashlib.sha256(
         publication_seed.encode('utf-8')).hexdigest()[:24]
     source_status = build_source_status(sources, health, articles)
     stats = build_stats(sources, health, articles, generated_at)
+    stats['run'] = snapshot.get('run_stats') or {}
+    stats['warnings'] = snapshot.get('warnings') or []
     dashboard = {
         'schema_version': 1,
         'publication_id': publication_id,
@@ -149,6 +190,9 @@ def prepare_publication(snapshot, sources, public_origin='https://high-signal.in
         # that parse alone costs 7-15 ms of a 10 ms Free-plan CPU budget.
         Document('stats', _json_text(stats)),
         Document('sources', _json_text(source_status)),
+        # Private continuation state. The Worker has no route for this key;
+        # the next scheduled publisher loads it by exact publication id.
+        Document('scraper_state', _json_text(scraper_state)),
     )
     return Publication(publication_id, generated_at, documents)
 
@@ -256,17 +300,24 @@ def build_rss(articles, sources, generated_at, public_origin):
         + ''.join(items) + '</channel></rss>')
 
 
-def previous_snapshot(document):
+def previous_snapshot(document, scraper_state_document=None):
     if not document:
         return None
     try:
         dashboard = json.loads(document['body_text'])
     except (KeyError, TypeError, ValueError) as exc:
         raise D1Error('Active dashboard document is invalid JSON') from exc
+    state = None
+    if scraper_state_document:
+        try:
+            state = json.loads(scraper_state_document['body_text'])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise D1Error('Active scraper state document is invalid JSON') from exc
     return {
         'generated_at': dashboard.get('generated_at'),
         'articles': dashboard.get('articles') or [],
         'health': ((dashboard.get('sources') or {}).get('sources') or []),
+        'scraper_state': state,
     }
 
 
@@ -280,12 +331,32 @@ def article_time(article):
             parse_iso(article.get('timestamp')) or datetime.min)
 
 
-def _validate_run(scraper, articles):
-    enabled = [source for source in scraper.sources
-               if source.get('enabled', True) is not False]
-    ok = [row for row in scraper.health.values() if row.get('state') == 'ok']
-    if enabled and not ok:
+def _coverage(scraper, min_source_coverage=None):
+    """Current-run source success, as the publication gate measures it."""
+    if min_source_coverage is None:
+        min_source_coverage = os.environ.get(
+            'SCRAPE_MIN_SOURCE_COVERAGE', DEFAULT_MIN_SOURCE_COVERAGE)
+    threshold = min(max(float(min_source_coverage), 0.0), 1.0)
+    enabled = len([source for source in scraper.sources
+                   if source.get('enabled', True) is not False])
+    succeeded = int(scraper.run_stats.get('succeeded') or 0)
+    return {
+        'succeeded': succeeded,
+        'enabled': enabled,
+        'threshold': threshold,
+        'required': math.ceil(enabled * threshold),
+    }
+
+
+def _validate_run(articles, coverage):
+    enabled = coverage['enabled']
+    succeeded = coverage['succeeded']
+    if enabled and succeeded == 0:
         raise D1Error('All enabled sources failed; previous publication retained')
+    if enabled and succeeded < coverage['required']:
+        raise D1Error(
+            f'Only {succeeded}/{enabled} enabled sources succeeded this run; '
+            f"at least {coverage['required']} are required to publish")
     if not articles:
         raise D1Error('Scrape produced no articles; previous publication retained')
 
@@ -305,8 +376,7 @@ def _round_robin_hosts(articles):
 
 
 def _is_public_http_url(url):
-    parsed = urlparse(url)
-    return parsed.scheme in ('http', 'https') and bool(parsed.hostname)
+    return is_public_url(url)
 
 
 def _json_text(payload):
@@ -323,4 +393,33 @@ def settings_from_env():
         'warm_min_score': int(os.environ.get('SUMMARY_WARM_MIN_SCORE', SCORE_MID)),
         'warm_budget_seconds': int(os.environ.get('SUMMARY_WARM_BUDGET_SECONDS', 90)),
         'warm_workers': int(os.environ.get('SUMMARY_WARM_WORKERS', 8)),
+        'scrape_budget_seconds': int(os.environ.get(
+            'SCRAPE_BUDGET_SECONDS', 600)),
+        'min_source_coverage': float(os.environ.get(
+            'SCRAPE_MIN_SOURCE_COVERAGE', DEFAULT_MIN_SOURCE_COVERAGE)),
+        # _coverage clamps this to 0-1; the gate still rejects a run where every
+        # enabled source failed, whatever the configured share.
     }
+
+
+def _write_run_report(scraper, articles, coverage, error=None, warnings=None):
+    path = os.environ.get('SCRAPE_REPORT_PATH')
+    if not path:
+        return
+    report = {
+        'schema_version': 1,
+        'generated_at': utc_now(),
+        'status': 'rejected' if error else 'accepted',
+        'error': error,
+        'run': dict(scraper.run_stats),
+        'source_coverage': coverage,
+        'article_count': len(articles),
+        'warnings': warnings or [],
+        'sources': list(scraper.health.values()),
+    }
+    try:
+        with open(path, 'w') as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2)
+            handle.write('\n')
+    except OSError as exc:
+        print(f'⚠️  Could not write scrape report: {exc}')

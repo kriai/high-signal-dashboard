@@ -7,11 +7,41 @@ import store
 import json
 import hashlib
 import os
-from datetime import datetime, timedelta
+import copy
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import time
 import random
 from urllib.parse import urljoin, urlparse
 import re
+
+from source_config import (SourceConfigError, config_fingerprint,
+                           is_public_address, is_public_url, normalize_source,
+                           public_host_addresses, source_key, source_strategies,
+                           split_css_selectors)
+
+
+LISTING_FETCH_LIMIT = 2 * 1024 * 1024
+SOURCE_BUDGET_SECONDS = 45
+SOURCE_REQUEST_LIMIT = 5
+DEFAULT_RETENTION_HOURS = 72
+
+
+def utc_now():
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+
+def parse_utc(value):
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 # Navigation, legal and site-chrome labels that get picked up alongside real
 # headlines. Compared against a lowercased, punctuation-stripped title.
@@ -55,7 +85,7 @@ JUNK_PATH_SEGMENTS = {
     'archives', 'author', 'authors', 'career', 'careers', 'categories',
     'category', 'contact', 'contact-us', 'cookie', 'cookies', 'courses', 'dmca',
     'events', 'faq', 'feed', 'guides', 'help', 'imprint', 'jobs', 'legal',
-    'login', 'newsletter', 'newsletters', 'signin', 'sign-in', 'signup',
+    'login', 'newsletter', 'newsletters', 'portfolio', 'signin', 'sign-in', 'signup',
     'sign-up', 'pricing', 'privacy', 'register', 'rss', 'sponsor', 'sponsors',
     'subscribe', 'support', 'tag', 'tags', 'team', 'terms', 'tools', 'tos',
 }
@@ -337,7 +367,9 @@ def is_junk(title, link, source_url):
     if _normalize_url(link) == _normalize_url(source_url):
         return True
 
-    words = title.split()
+    # Count semantic words so an icon or decorative emoji cannot turn a
+    # three-word footer label into an apparent four-word headline.
+    words = normalized.split()
     has_digit = any(c.isdigit() for c in title)
     # A story slug is at least two path segments deep; nav sits at the root.
     shallow = len(segments) <= 1
@@ -807,7 +839,15 @@ class HighSignalScraper:
                     data = json.load(handle)
             sources = data.get('sources', [])
         self.sources = list(sources)
-        
+        names = [s.get('name', '').casefold() for s in self.sources
+                 if isinstance(s, dict) and s.get('name')]
+        if len(names) != len(self.sources) or len(names) != len(set(names)):
+            raise SourceConfigError('Every source needs a unique name')
+        storage_ids = [(s.get('_storage') or {}).get('id') for s in self.sources
+                       if (s.get('_storage') or {}).get('id')]
+        if len(storage_ids) != len(set(storage_ids)):
+            raise SourceConfigError('Every persisted source needs a unique id')
+
         self.source_by_name = {s['name']: s for s in self.sources}
         # Source names visited by the most recent pass. A deadline-limited pass
         # covers only some of them; see scrape_all.
@@ -815,6 +855,9 @@ class HighSignalScraper:
         self.articles = []
         self.previous_by_id = {}
         self.health = {}
+        self.source_batches = {}
+        self.run_stats = {'enabled': 0, 'attempted': 0, 'succeeded': 0,
+                          'failed': 0, 'skipped': 0}
         self.last_run = None
         self.scraper = cloudscraper.create_scraper(
             browser={
@@ -831,37 +874,91 @@ class HighSignalScraper:
         ]
     
     def scrape_with_selectors(self, source, soup):
-        selectors = source.get('selector', 'h2 a').split(', ')
-        fallbacks = source.get('fallback', '').split(', ') if source.get('fallback') else []
-        
-        all_selectors = selectors + fallbacks
-        
-        for selector in all_selectors:
-            if not selector.strip():
-                continue
+        """Return nodes from the first selector that yields usable articles."""
+        selectors = (split_css_selectors(source.get('selectors')) or
+                     split_css_selectors(source.get('selector', 'h2 a')))
+        selectors += split_css_selectors(source.get('fallback'))
+        for selector in selectors:
             try:
-                items = soup.select(selector.strip())
-                if items and len(items) > 0:
-                    return items
-            except:
+                items = soup.select(selector)
+            except Exception:  # noqa: BLE001
                 continue
-        
-        # Last resort: prefer links that sit in content regions over a blanket
-        # sweep of every anchor, which is mostly header and footer nav.
+            if items and self.extract_articles_from_items(items, source):
+                return items
+
         content_links = soup.select(
-            'article a[href], main a[href], h1 a[href], h2 a[href], h3 a[href]'
-        )
-        if content_links:
-            return content_links[:40]
+            'article a[href], main a[href], h1 a[href], h2 a[href], h3 a[href]')
+        return content_links[:40]
 
-        return soup.find_all('a', href=True)[:40]
+    def extract_static_articles(self, soup, source, selectors=None):
+        """Try configured selectors until accepted articles, with diagnostics."""
+        configured = list(selectors or [])
+        if not configured:
+            configured = (split_css_selectors(source.get('selectors')) or
+                          split_css_selectors(source.get('selector', 'h2 a')))
+            configured += split_css_selectors(source.get('fallback'))
+        candidates = [(selector, False) for selector in configured]
+        candidates.append((
+            'article a[href], main a[href], h1 a[href], h2 a[href], h3 a[href]',
+            True))
+        aggregate = {'raw_candidates': 0, 'accepted_articles': 0,
+                     'rejected_counts': {}, 'invalid_selectors': []}
+        for selector, generic in candidates:
+            try:
+                items = soup.select(selector)
+            except Exception as exc:  # noqa: BLE001
+                aggregate['invalid_selectors'].append(
+                    {'selector': selector, 'error': str(exc)[:120]})
+                continue
+            if generic:
+                items = [item for item in items[:80]
+                         if not item.find_parent(['nav', 'header', 'footer'])]
+            diagnostics = {'raw_candidates': len(items), 'accepted_articles': 0,
+                           'rejected_counts': {}}
+            articles = self.extract_articles_from_items(
+                items, source, diagnostics=diagnostics)
+            aggregate['raw_candidates'] += diagnostics['raw_candidates']
+            for reason, count in diagnostics['rejected_counts'].items():
+                aggregate['rejected_counts'][reason] = (
+                    aggregate['rejected_counts'].get(reason, 0) + count)
+            if articles:
+                aggregate['accepted_articles'] = len(articles)
+                aggregate['selector_used'] = selector
+                aggregate['used_generic_fallback'] = generic
+                return articles, aggregate
+        aggregate['selector_used'] = None
+        aggregate['used_generic_fallback'] = False
+        return [], aggregate
 
-    def extract_articles_from_items(self, items, source):
+    @staticmethod
+    def _reject(diagnostics, reason):
+        if diagnostics is not None:
+            counts = diagnostics.setdefault('rejected_counts', {})
+            counts[reason] = counts.get(reason, 0) + 1
+
+    @staticmethod
+    def _link_allowed(source, link):
+        parsed = urlparse(link)
+        allowed_hosts = [host.lower().lstrip('.')
+                         for host in source.get('allowed_hosts', [])]
+        if allowed_hosts:
+            host = (parsed.hostname or '').lower()
+            if not any(host == allowed or host.endswith('.' + allowed)
+                       for allowed in allowed_hosts):
+                return False
+        prefixes = source.get('path_prefixes', [])
+        if prefixes and not any(parsed.path.startswith(prefix) for prefix in prefixes):
+            return False
+        return True
+
+    def extract_articles_from_items(self, items, source, diagnostics=None):
         articles = []
         seen_titles = set()
         seen_links = set()
 
         limit = int(source.get('limit', 15))
+        if diagnostics is not None:
+            diagnostics.setdefault('raw_candidates', len(items))
 
         for item in items:
             if len(articles) >= limit:
@@ -869,6 +966,7 @@ class HighSignalScraper:
             try:
                 title = item.get_text(strip=True)
                 if not title or len(title) < 5:
+                    self._reject(diagnostics, 'invalid_title')
                     continue
 
                 title = re.sub(r'\s+', ' ', title).strip()
@@ -886,24 +984,35 @@ class HighSignalScraper:
                         link = parent_link.get('href', '')
 
                 if not link:
+                    self._reject(diagnostics, 'missing_link')
                     continue
 
                 if not link.startswith('http'):
-                    link = urljoin(source['url'], link)
+                    link = urljoin(source.get('_document_url') or source['url'], link)
+
+                if not is_public_url(link):
+                    self._reject(diagnostics, 'unsafe_link')
+                    continue
 
                 if ARXIV_ID.match(title):
                     title = resolve_arxiv_title(item, title)
 
                 if is_junk(title, link, source['url']):
+                    self._reject(diagnostics, 'junk')
+                    continue
+                if not self._link_allowed(source, link):
+                    self._reject(diagnostics, 'outside_source_scope')
                     continue
 
                 title_key = title[:50].lower()
                 if title_key in seen_titles:
+                    self._reject(diagnostics, 'duplicate_title')
                     continue
                 seen_titles.add(title_key)
 
                 link_key = _normalize_url(link)
                 if link_key in seen_links:
+                    self._reject(diagnostics, 'duplicate_link')
                     continue
                 seen_links.add(link_key)
 
@@ -929,9 +1038,12 @@ class HighSignalScraper:
                     'also_in': []
                 })
                 
-            except Exception as e:
+            except Exception:  # noqa: BLE001
+                self._reject(diagnostics, 'item_error')
                 continue
-        
+
+        if diagnostics is not None:
+            diagnostics['accepted_articles'] = len(articles)
         return articles
     
     def resolve_category(self, source, title):
@@ -959,17 +1071,13 @@ class HighSignalScraper:
         handles extraction quality and network failures.
         """
         link = article.get('link') or ''
-        if not link.startswith(('http://', 'https://')):
+        if not is_public_url(link):
             return metadata_summary(article), 'metadata', 'Article has no fetchable URL'
 
         try:
-            response = self.scraper.get(
-                link,
-                headers={'User-Agent': random.choice(self.user_agents)},
-                timeout=timeout,
-                allow_redirects=True,
-                stream=True
-            )
+            response = self._request_with_safe_redirects(
+                link, {'User-Agent': random.choice(self.user_agents)},
+                timeout=(min(5, timeout), timeout), request_limit=5, counter=[0])
             if response.status_code != 200:
                 response.close()
                 return metadata_summary(article), 'metadata', \
@@ -1011,9 +1119,10 @@ class HighSignalScraper:
             return None
 
         if not link.startswith('http'):
-            link = urljoin(source['url'], link)
+            link = urljoin(source.get('_document_url') or source['url'], link)
 
-        if is_junk(title, link, source['url']):
+        if (not is_public_url(link) or is_junk(title, link, source['url']) or
+                not self._link_allowed(source, link)):
             return None
 
         score, reasons = score_headline(source, title)
@@ -1050,37 +1159,47 @@ class HighSignalScraper:
             out.append(article)
         return out
 
-    def fetch_feed(self, source, response):
+    def fetch_feed(self, source, response, diagnostics=None):
         """Parse an RSS/Atom response body into articles."""
-        parsed = feedparser.parse(response.text)
+        body = getattr(response, 'content', None) or response.text
+        parsed = feedparser.parse(body)
         limit = int(source.get('limit', 15))
         articles = []
 
+        if diagnostics is not None:
+            diagnostics['raw_candidates'] = len(parsed.entries)
+            if getattr(parsed, 'bozo', False):
+                diagnostics['parser_warning'] = str(
+                    getattr(parsed, 'bozo_exception', 'Malformed feed'))[:160]
+
         for entry in parsed.entries:
-            if len(articles) >= limit:
-                break
+            try:
+                published, precision = None, None
+                stamp = entry.get('published_parsed') or entry.get('updated_parsed')
+                if stamp:
+                    try:
+                        published = datetime(*stamp[:6]).isoformat()
+                        precision = 'exact'
+                    except (TypeError, ValueError):
+                        published = None
 
-            published, precision = None, None
-            stamp = entry.get('published_parsed') or entry.get('updated_parsed')
-            if stamp:
-                try:
-                    # Feeds carry a real publish time, so the UI can show "2h"
-                    # instead of falling back to the coarse page-scrape guess.
-                    published = datetime(*stamp[:6]).isoformat()
-                    precision = 'exact'
-                except (TypeError, ValueError):
-                    published = None
+                summary = re.sub(r'<[^>]+>', ' ', entry.get('summary', '') or '')
+                article = self.build_article(
+                    source, entry.get('title', ''), entry.get('link', ''),
+                    published, precision, re.sub(r'\s+', ' ', summary).strip())
+                if article:
+                    articles.append(article)
+                else:
+                    self._reject(diagnostics, 'invalid_or_filtered_entry')
+            except Exception:  # noqa: BLE001
+                self._reject(diagnostics, 'item_error')
 
-            summary = re.sub(r'<[^>]+>', ' ', entry.get('summary', '') or '')
-            article = self.build_article(
-                source, entry.get('title', ''), entry.get('link', ''),
-                published, precision, re.sub(r'\s+', ' ', summary).strip())
-            if article:
-                articles.append(article)
+        result = self.dedupe_new(articles)[:limit]
+        if diagnostics is not None:
+            diagnostics['accepted_articles'] = len(result)
+        return result
 
-        return self.dedupe_new(articles)
-
-    def fetch_json(self, source, response):
+    def fetch_json(self, source, response, diagnostics=None):
         """Parse a Reddit-style JSON listing into articles."""
         data = response.json()
         limit = int(source.get('limit', 15))
@@ -1088,122 +1207,379 @@ class HighSignalScraper:
 
         children = data.get('data', {}).get('children', []) \
             if isinstance(data, dict) else []
+        if diagnostics is not None:
+            diagnostics['raw_candidates'] = len(children)
+            diagnostics['json_shape_valid'] = (
+                isinstance(data, dict) and isinstance(data.get('data'), dict) and
+                isinstance(data.get('data', {}).get('children'), list))
 
         for child in children:
-            if len(articles) >= limit:
-                break
-            post = child.get('data', {}) or {}
-            if post.get('stickied'):
-                continue
+            try:
+                post = child.get('data', {}) or {}
+                if post.get('stickied'):
+                    self._reject(diagnostics, 'stickied')
+                    continue
 
-            published, precision = None, None
-            created = post.get('created_utc')
-            if created:
-                try:
-                    published = datetime.fromtimestamp(created).isoformat()
-                    precision = 'exact'
-                except (TypeError, ValueError, OSError):
-                    published = None
+                published, precision = None, None
+                created = post.get('created_utc')
+                if created:
+                    try:
+                        published = datetime.fromtimestamp(created).isoformat()
+                        precision = 'exact'
+                    except (TypeError, ValueError, OSError):
+                        published = None
 
-            # `permalink` keeps discussion posts pointing at the thread; `url`
-            # alone sends self-posts to a bare reddit.com/r/... redirect.
-            link = post.get('url') or ''
-            if post.get('is_self') and post.get('permalink'):
-                link = urljoin('https://www.reddit.com', post['permalink'])
+                link = post.get('url') or ''
+                if post.get('is_self') and post.get('permalink'):
+                    link = urljoin('https://www.reddit.com', post['permalink'])
 
-            article = self.build_article(
-                source, post.get('title', ''), link, published, precision,
-                (post.get('selftext') or '')[:280])
-            if article:
-                articles.append(article)
+                article = self.build_article(
+                    source, post.get('title', ''), link, published, precision,
+                    (post.get('selftext') or '')[:280])
+                if article:
+                    articles.append(article)
+                else:
+                    self._reject(diagnostics, 'invalid_or_filtered_entry')
+            except Exception:  # noqa: BLE001
+                self._reject(diagnostics, 'item_error')
 
-        return self.dedupe_new(articles)
+        result = self.dedupe_new(articles)[:limit]
+        if diagnostics is not None:
+            diagnostics['accepted_articles'] = len(result)
+        return result
 
     def scrape_source(self, source):
-        """Fetch one source. Returns (articles, health).
+        """Fetch one source through bounded ordered strategies."""
+        started = time.monotonic()
+        display_source = source if isinstance(source, dict) else {'name': 'Unknown'}
+        try:
+            source = normalize_source(source)
+        except (SourceConfigError, TypeError, ValueError) as exc:
+            return [], self.record_health(
+                display_source, 'error', 0, None, str(exc), 0, started,
+                failure_kind='invalid_config', attempted=True)
 
-        Health is reported for every source, including the ones that fail. A
-        source that quietly returns nothing used to vanish from the dashboard
-        with no trace; now it stays visible with a state the UI can render.
-        """
-        started = time.time()
-        max_retries = int(source.get('retries', 3))
-        source_type = (source.get('type') or 'static').lower()
+        max_retries = source['retries']
+        source_deadline = started + SOURCE_BUDGET_SECONDS
         http_status = None
         error = None
         attempts = 0
+        failure_kind = 'network'
+        last_diagnostics = {}
+        last_strategy = None
+        fetch_url = final_url = None
+        response_bytes = 0
+        content_type = None
+        blocked_hosts = set()
+        blocked_urls = set()
 
-        for attempt in range(max_retries):
-            attempts = attempt + 1
-            try:
-                # Rotating the UA helps on plain page scrapes, but it overrides
-                # the one cloudscraper picked to match its own TLS fingerprint.
-                # Feed endpoints behind a bot check (Reddit) read that mismatch
-                # as a spoof and answer 403, so leave their headers alone.
-                headers = {}
-                if source_type not in ('rss', 'json'):
-                    headers = {'User-Agent': random.choice(self.user_agents)}
+        for strategy in source_strategies(source):
+            last_strategy = strategy
+            fetch_url = strategy['url']
+            if (fetch_url in blocked_urls or
+                    (urlparse(fetch_url).hostname or '').lower() in blocked_hosts):
+                continue
+            strategy_attempt = 0
+            while (strategy_attempt < max_retries and
+                   attempts < SOURCE_REQUEST_LIMIT and
+                   time.monotonic() < source_deadline):
+                strategy_attempt += 1
+                response = None
+                request_counter = [0]
+                try:
+                    headers = {}
+                    if strategy['type'] not in ('rss', 'json'):
+                        headers = {'User-Agent': random.choice(self.user_agents)}
+                    remaining = max(0.1, source_deadline - time.monotonic())
+                    response = self._request_with_safe_redirects(
+                        fetch_url, headers,
+                        timeout=(min(5, remaining), min(10, remaining)),
+                        request_limit=SOURCE_REQUEST_LIMIT - attempts,
+                        counter=request_counter)
+                    attempts += request_counter[0]
+                    request_counter[0] = 0
+                    http_status = response.status_code
+                    final_url = getattr(response, 'url', None) or fetch_url
+                    redirect_urls = [getattr(item, 'url', '')
+                                     for item in getattr(response, 'history', [])]
+                    if not all(is_public_url(url) for url in redirect_urls + [final_url]):
+                        self._close_response(response)
+                        failure_kind = 'invalid_config'
+                        error = 'Request redirected to a local or private address'
+                        break
 
-                # `feed_url` lets a source keep its human-facing homepage in
-                # `url` (what the UI links to) while fetching from the feed or
-                # JSON endpoint that actually serves the headlines.
-                fetch_url = source.get('feed_url') or source['url']
+                    content_type = response.headers.get('content-type', '')
+                    if http_status == 429:
+                        self._close_response(response)
+                        failure_kind, error = 'rate_limited', 'HTTP 429'
+                        blocked_hosts.add((urlparse(final_url).hostname or '').lower())
+                        delay = self._retry_after_seconds(response)
+                        if (strategy_attempt < max_retries and delay is not None and
+                                time.monotonic() + delay < source_deadline):
+                            time.sleep(delay)
+                            continue
+                        break
+                    if http_status in (401, 403):
+                        self._close_response(response)
+                        failure_kind, error = 'blocked', f'HTTP {http_status}'
+                        blocked_urls.add(fetch_url)
+                        break
+                    if http_status in (404, 410):
+                        self._close_response(response)
+                        failure_kind, error = 'not_found', f'HTTP {http_status}'
+                        blocked_urls.add(fetch_url)
+                        break
+                    if http_status == 408 or http_status >= 500:
+                        self._close_response(response)
+                        failure_kind = 'timeout' if http_status == 408 else 'network'
+                        error = f'HTTP {http_status}'
+                        if strategy_attempt < max_retries and attempts < SOURCE_REQUEST_LIMIT:
+                            self._retry_sleep(strategy_attempt, source_deadline)
+                            continue
+                        break
+                    if http_status != 200:
+                        self._close_response(response)
+                        failure_kind, error = 'network', f'HTTP {http_status}'
+                        break
 
-                response = self.scraper.get(
-                    fetch_url,
-                    headers=headers,
-                    timeout=20,
-                    allow_redirects=True
-                )
-                http_status = response.status_code
+                    body = self._read_listing_body(response)
+                    response_bytes = len(body)
+                    response._content = body
+                    response._content_consumed = True
+                    if is_challenge_page(response.text):
+                        failure_kind = 'blocked'
+                        error = 'Blocked by a bot challenge'
+                        break
+                    mime = (content_type or '').split(';', 1)[0].strip().lower()
+                    if (strategy['type'] == 'static' and
+                            mime in ('application/json', 'application/feed+json')):
+                        failure_kind = 'unexpected_content'
+                        error = f'Expected HTML but received {mime}'
+                        break
+                    if (strategy['type'] == 'rss' and mime == 'text/html' and
+                            not re.search(r'<(rss|feed)\b', response.text[:2000], re.I)):
+                        failure_kind = 'unexpected_content'
+                        error = 'Expected RSS or Atom but received HTML'
+                        break
 
-                if response.status_code == 200:
-                    if source_type == 'rss':
-                        articles = self.fetch_feed(source, response)
-                        empty_error = 'Fetched the feed but it contained no usable entries'
-                    elif source_type == 'json':
-                        articles = self.fetch_json(source, response)
-                        empty_error = 'Fetched the endpoint but it contained no usable posts'
-                    elif is_challenge_page(response.text):
-                        # A bot challenge answers 200 with a near-empty body, so
-                        # the selector "misses" and the real cause -- being
-                        # blocked -- never surfaces. Name it instead.
-                        articles = []
-                        empty_error = ('Blocked by a bot challenge '
-                                       '(the page returned 200 but served no content)')
+                    strategy_source = dict(
+                        source, type=strategy['type'], _document_url=final_url)
+                    diagnostics = {'raw_candidates': 0, 'accepted_articles': 0,
+                                   'rejected_counts': {}}
+                    if strategy['type'] == 'rss':
+                        articles = self.fetch_feed(
+                            strategy_source, response, diagnostics)
+                        failure_kind = ('parse_error' if diagnostics.get('parser_warning')
+                                        and not articles else 'empty_feed')
+                        error = ('Fetched the feed but it contained no usable entries')
+                    elif strategy['type'] == 'json':
+                        try:
+                            articles = self.fetch_json(
+                                strategy_source, response, diagnostics)
+                        except (TypeError, ValueError, requests.JSONDecodeError) as exc:
+                            articles = []
+                            diagnostics['parser_warning'] = str(exc)[:160]
+                            diagnostics['json_shape_valid'] = False
+                        failure_kind = ('parse_error'
+                                        if not diagnostics.get('json_shape_valid')
+                                        else 'empty_feed')
+                        error = ('Fetched the endpoint but it contained no usable posts')
                     else:
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        items = self.scrape_with_selectors(source, soup)
-                        articles = self.extract_articles_from_items(items, source)
-                        empty_error = 'Fetched the page but no headline matched the selector'
+                        base = soup.select_one('base[href]')
+                        if base:
+                            candidate_base = urljoin(final_url, base.get('href'))
+                            if is_public_url(candidate_base):
+                                strategy_source['_document_url'] = candidate_base
+                        articles, diagnostics = self.extract_static_articles(
+                            soup, strategy_source, strategy.get('selectors'))
+                        failure_kind = ('filtered_all'
+                                        if diagnostics.get('raw_candidates')
+                                        else 'selector_miss')
+                        error = 'Fetched the page but no configured selector yielded a headline'
+                    last_diagnostics = diagnostics
 
-                    if articles:
+                    if articles or source.get('allow_empty'):
                         print(f"✅ {source['name']}: {len(articles)} articles")
                         return articles, self.record_health(
                             source, 'ok', len(articles), http_status, None,
-                            attempts, started)
+                            attempts, started, failure_kind=None, attempted=True,
+                            fetch_url=fetch_url, final_url=final_url,
+                            strategy_id=strategy['id'], diagnostics=diagnostics,
+                            response_bytes=response_bytes,
+                            content_type=content_type)
+                    # Parsing the same body again cannot change the result.
+                    break
+                except OverflowError as exc:
+                    attempts += request_counter[0]
+                    if response is not None:
+                        self._close_response(response)
+                    failure_kind = 'response_too_large'
+                    error = str(exc)
+                    break
+                except (requests.Timeout, TimeoutError) as exc:
+                    attempts += request_counter[0]
+                    if response is not None:
+                        self._close_response(response)
+                    http_status = None
+                    failure_kind = 'timeout'
+                    error = f'{type(exc).__name__}: {str(exc)[:160]}'
+                    if strategy_attempt < max_retries and attempts < SOURCE_REQUEST_LIMIT:
+                        self._retry_sleep(strategy_attempt, source_deadline)
+                        continue
+                    break
+                except SourceConfigError as exc:
+                    attempts += request_counter[0]
+                    if response is not None:
+                        self._close_response(response)
+                    failure_kind = 'invalid_config'
+                    error = str(exc)
+                    break
+                except requests.RequestException as exc:
+                    attempts += request_counter[0]
+                    if response is not None:
+                        self._close_response(response)
+                    http_status = None
+                    failure_kind = 'network'
+                    error = f'{type(exc).__name__}: {str(exc)[:160]}'
+                    if strategy_attempt < max_retries and attempts < SOURCE_REQUEST_LIMIT:
+                        self._retry_sleep(strategy_attempt, source_deadline)
+                        continue
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    attempts += request_counter[0]
+                    if response is not None:
+                        self._close_response(response)
+                    failure_kind = 'internal_error'
+                    error = f'{type(exc).__name__}: {str(exc)[:160]}'
+                    break
 
-                    error = empty_error
-                else:
-                    error = f'HTTP {response.status_code}'
+        state = 'empty' if failure_kind in (
+            'empty_feed', 'selector_miss', 'filtered_all') else 'error'
+        return [], self.record_health(
+            source, state, 0, http_status, error, attempts, started,
+            failure_kind=failure_kind, attempted=True, fetch_url=fetch_url,
+            final_url=final_url,
+            strategy_id=(last_strategy or {}).get('id'),
+            diagnostics=last_diagnostics, response_bytes=response_bytes,
+            content_type=content_type)
 
-                time.sleep(random.uniform(1, 3))
+    @staticmethod
+    def _read_listing_body(response):
+        if (getattr(response, '_content_consumed', False) or
+                getattr(response, 'raw', None) is None):
+            body = bytes(response.content)
+            if len(body) > LISTING_FETCH_LIMIT:
+                raise OverflowError(
+                    f'Response exceeded {LISTING_FETCH_LIMIT} bytes')
+            HighSignalScraper._close_response(response)
+            return body
+        body = bytearray()
+        try:
+            for chunk in response.iter_content(16384):
+                body.extend(chunk)
+                if len(body) > LISTING_FETCH_LIMIT:
+                    raise OverflowError(
+                        f'Response exceeded {LISTING_FETCH_LIMIT} bytes')
+        finally:
+            HighSignalScraper._close_response(response)
+        return bytes(body)
 
-            except Exception as exc:
-                error = f'{type(exc).__name__}: {str(exc)[:160]}'
-                print(f"❌ {source['name']} (attempt {attempts}): {error[:100]}")
-                time.sleep(random.uniform(2, 5))
+    def _request_with_safe_redirects(self, url, headers, timeout,
+                                     request_limit, counter):
+        current = url
+        history = []
+        if request_limit < 1:
+            raise requests.TooManyRedirects('Source request budget exhausted')
+        while True:
+            if not is_public_url(current):
+                raise SourceConfigError(
+                    'Request redirected to a local or private address')
+            resolved = public_host_addresses(current)
+            if resolved is False:
+                raise SourceConfigError(
+                    'Request host resolved to a local or private address')
+            if resolved is None:
+                raise requests.ConnectionError('Request host could not be resolved')
+            counter[0] += 1
+            response = self.scraper.get(
+                current, headers=headers, timeout=timeout,
+                allow_redirects=False, stream=True)
+            peer = self._response_peer_address(response)
+            if peer and not is_public_address(peer):
+                self._close_response(response)
+                raise SourceConfigError(
+                    'Request connected to a local or private address')
+            if response.status_code not in (301, 302, 303, 307, 308):
+                response.history = history
+                return response
+            location = response.headers.get('location')
+            next_url = urljoin(current, location or '')
+            self._close_response(response)
+            if not location or not is_public_url(next_url):
+                raise SourceConfigError(
+                    'Request redirected to a local or private address')
+            history.append(response)
+            if counter[0] >= request_limit:
+                raise requests.TooManyRedirects('Source redirect limit exceeded')
+            current = next_url
 
-        state = 'empty' if http_status == 200 else 'error'
-        return [], self.record_health(source, state, 0, http_status, error,
-                                      attempts, started)
+    @staticmethod
+    def _response_peer_address(response):
+        raw = getattr(response, 'raw', None)
+        connection = (getattr(raw, '_connection', None) or
+                      getattr(raw, 'connection', None))
+        sock = getattr(connection, 'sock', None)
+        if sock is None:
+            return None
+        try:
+            return sock.getpeername()[0]
+        except (AttributeError, OSError, TypeError):
+            return None
+
+    @staticmethod
+    def _close_response(response):
+        try:
+            response.close()
+        except AttributeError:
+            # Deterministic test responses may intentionally have no raw socket.
+            pass
+
+    @staticmethod
+    def _retry_after_seconds(response):
+        value = response.headers.get('retry-after')
+        if not value:
+            return None
+        try:
+            return max(0, min(60, int(value)))
+        except (TypeError, ValueError):
+            try:
+                parsed = parsedate_to_datetime(value)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return max(0, min(60, int(
+                    (parsed - datetime.now(timezone.utc)).total_seconds())))
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+    @staticmethod
+    def _retry_sleep(attempt, deadline):
+        delay = min(8, 2 ** max(0, attempt - 1)) + random.uniform(0, 0.25)
+        remaining = deadline - time.monotonic()
+        if remaining > delay:
+            time.sleep(delay)
 
     def record_health(self, source, state, count, http_status, error,
-                      attempts, started):
+                      attempts, started, failure_kind=None, attempted=True,
+                      fetch_url=None, final_url=None, strategy_id=None,
+                      diagnostics=None, response_bytes=0, content_type=None,
+                      retained_articles=0):
         """Build one source's health row, carrying its last success forward."""
-        name = source['name']
+        name = source.get('name') or 'Invalid source'
         previous = self.health.get(name, {})
-        checked_at = datetime.now().isoformat()
+        checked_at = utc_now() if attempted else previous.get('checked_at')
+        failed = attempted and state not in ('ok', 'disabled', 'pending')
+        diagnostics = diagnostics or {}
 
         return {
             'name': name,
@@ -1215,12 +1591,30 @@ class HighSignalScraper:
             'articles': count,
             'http_status': http_status,
             'error': error,
+            'failure_kind': failure_kind,
             'attempts': attempts,
-            'duration_ms': int((time.time() - started) * 1000),
+            'attempted': attempted,
+            'duration_ms': int((time.monotonic() - started) * 1000),
             'checked_at': checked_at,
             'last_success': checked_at if state == 'ok' else previous.get('last_success'),
-            'consecutive_failures': 0 if state == 'ok'
-                                    else previous.get('consecutive_failures', 0) + 1,
+            'consecutive_failures': (
+                0 if state == 'ok' else
+                previous.get('consecutive_failures', 0) + (1 if failed else 0)),
+            'fetch_url': fetch_url,
+            'final_url': final_url,
+            'strategy_id': strategy_id,
+            'selector_used': diagnostics.get('selector_used'),
+            'raw_candidates': diagnostics.get('raw_candidates', 0),
+            'accepted_articles': diagnostics.get('accepted_articles', count),
+            'rejected_counts': diagnostics.get('rejected_counts', {}),
+            'invalid_selectors': diagnostics.get('invalid_selectors', [])[:3],
+            'parser_warning': diagnostics.get('parser_warning'),
+            'quality_warnings': (
+                ['generic selector fallback used']
+                if diagnostics.get('used_generic_fallback') else []),
+            'response_bytes': response_bytes,
+            'content_type': content_type,
+            'retained_articles': retained_articles,
         }
 
     def scrape_all(self, progress=None, deadline=None, persist_health=True):
@@ -1237,7 +1631,6 @@ class HighSignalScraper:
         covers what it can and the next run picks up the sources it missed.
         `covered` afterwards names the sources this pass actually visited.
         """
-        all_articles = []
         enabled = [s for s in self.sources if s.get('enabled', True) is not False]
         skipped = [s for s in self.sources if s.get('enabled', True) is False]
 
@@ -1247,6 +1640,8 @@ class HighSignalScraper:
 
         total_sources = len(enabled)
         self.covered = set()
+        self.run_stats = {'enabled': total_sources, 'attempted': 0,
+                          'succeeded': 0, 'failed': 0, 'skipped': 0}
 
         print(f"\n🚀 Starting scrape of {total_sources} high-signal sources...\n")
 
@@ -1254,20 +1649,65 @@ class HighSignalScraper:
             if deadline and idx > 1 and time.time() >= deadline:
                 print(f"⏱️  Out of time after {idx - 1}/{total_sources} sources; "
                       f"the rest go first next run")
+                for remaining in enabled[idx - 1:]:
+                    previous = dict(self.health.get(remaining['name'], {}))
+                    retained = self._retained_articles(remaining)
+                    previous.update({
+                        'name': remaining['name'], 'url': remaining.get('url', ''),
+                        'enabled': True, 'attempted': False,
+                        'skip_reason': 'deadline',
+                        'retained_articles': len(retained),
+                    })
+                    if not previous.get('state'):
+                        previous['state'] = 'pending'
+                    self.health[remaining['name']] = previous
+                    self.run_stats['skipped'] += 1
                 break
             if progress:
                 progress(idx - 1, total_sources, source['name'])
             print(f"[{idx}/{total_sources}] Scraping: {source['name']}...")
             articles, health = self.scrape_source(source)
+            health.setdefault('attempted', True)
+            health.setdefault('state', 'error')
+            health.setdefault('articles', len(articles))
+            health.setdefault('name', source['name'])
+            health.setdefault('consecutive_failures', 0)
             self.health[source['name']] = health
             self.covered.add(source['name'])
-            all_articles.extend(articles)
-            time.sleep(random.uniform(0.5, 2))
+            self.run_stats['attempted'] += 1
+            if health['state'] == 'ok':
+                self.run_stats['succeeded'] += 1
+                fetched_at = health.get('last_success') or utc_now()
+                health['last_success'] = fetched_at
+                health['failure_kind'] = None
+                for article in articles:
+                    article['last_fetched_at'] = fetched_at
+                    article['is_stale'] = False
+                try:
+                    normalized = normalize_source(source)
+                    self.source_batches[source_key(source)] = {
+                        'name': source['name'],
+                        'config_fingerprint': config_fingerprint(normalized),
+                        'last_good_fetch_at': fetched_at,
+                        'articles': copy.deepcopy(articles[:normalized['limit']]),
+                    }
+                except SourceConfigError:
+                    # An externally mocked success can omit production fields;
+                    # it still participates in this run but is not persisted.
+                    pass
+            else:
+                self.run_stats['failed'] += 1
+                retained = self._retained_articles(source)
+                health['retained_articles'] = len(retained)
+            if idx < total_sources:
+                time.sleep(random.uniform(0.5, 2))
 
         for source in skipped:
             self.health[source['name']] = self.record_health(
-                source, 'disabled', 0, None, None, 0, time.time())
+                source, 'disabled', 0, None, None, 0, time.monotonic(),
+                attempted=False)
             self.covered.add(source['name'])
+            self.source_batches.pop(source_key(source), None)
 
         if progress:
             progress(total_sources, total_sources, None)
@@ -1276,17 +1716,16 @@ class HighSignalScraper:
         configured = {s['name'] for s in self.sources}
         self.health = {k: v for k, v in self.health.items() if k in configured}
 
-        # A deadline-limited pass only re-scraped some sources. Carry the last
-        # known articles for the untouched ones through dedupe, or the sources
-        # that did not fit in this invocation would vanish from the dashboard
-        # until their turn came round again.
-        carried = [a for a in self.articles if a.get('source') not in self.covered]
-        if carried:
-            print(f"↩️  Carrying {len(carried)} articles from "
-                  f"{len({a['source'] for a in carried})} un-scraped sources")
-
+        enabled_keys = {source_key(source) for source in enabled}
+        self.source_batches = {
+            key: batch for key, batch in self.source_batches.items()
+            if key in enabled_keys
+        }
+        all_articles = []
+        for source in enabled:
+            all_articles.extend(self._retained_articles(source, include_fresh=True))
         unique_articles = self.merge_with_previous(
-            self.dedupe(all_articles + carried))
+            self.dedupe(copy.deepcopy(all_articles)))
         unique_articles.sort(key=lambda x: x['signal_score'], reverse=True)
 
         self.articles = unique_articles
@@ -1304,6 +1743,35 @@ class HighSignalScraper:
 
         return unique_articles
 
+    def _retained_articles(self, source, include_fresh=False, now=None):
+        """Return a compatible, unexpired source-local batch."""
+        batch = self.source_batches.get(source_key(source))
+        if not batch:
+            return []
+        try:
+            normalized = normalize_source(source)
+        except SourceConfigError:
+            return []
+        if batch.get('config_fingerprint') != config_fingerprint(normalized):
+            return []
+        fetched = parse_utc(batch.get('last_good_fetch_at'))
+        now = now or datetime.now(timezone.utc)
+        ttl = timedelta(hours=normalized.get(
+            'retention_hours', DEFAULT_RETENTION_HOURS))
+        if fetched is None or now - fetched > ttl:
+            return []
+        current_health = self.health.get(source['name'], {})
+        fresh = (current_health.get('state') == 'ok' and
+                 current_health.get('attempted') is not False and
+                 current_health.get('last_success') == batch.get('last_good_fetch_at'))
+        if fresh and not include_fresh:
+            return []
+        articles = copy.deepcopy(batch.get('articles') or [])
+        for article in articles:
+            article['last_fetched_at'] = batch['last_good_fetch_at']
+            article['is_stale'] = not fresh
+        return articles
+
     def dedupe(self, articles):
         """Collapse identical ids, then cluster the same story across sources.
 
@@ -1320,7 +1788,9 @@ class HighSignalScraper:
         leads = []
         index = {}
 
-        for article in sorted(by_id.values(), key=lambda a: -a['signal_score']):
+        for article in sorted(
+                by_id.values(),
+                key=lambda a: (bool(a.get('is_stale')), -a['signal_score'])):
             keys = [k for k in ('url:' + _normalize_url(article['link']),
                                 'title:' + cluster_key(article['title']))
                     if not k.endswith(':')]
@@ -1368,10 +1838,12 @@ class HighSignalScraper:
 
     def save_to_cache(self, filename='cache.json'):
         payload = {
-            'version': 2,
+            'version': 4,
             'generated_at': self.last_run or datetime.now().isoformat(),
             'articles': self.articles,
             'health': list(self.health.values()),
+            'scraper_state': self.scraper_state_payload(),
+            'run_stats': self.run_stats,
         }
         write_json_atomic(filename, payload)
         print(f"💾 Saved {len(self.articles)} articles to cache")
@@ -1411,6 +1883,8 @@ class HighSignalScraper:
             article.setdefault('published_precision', None)
             article.setdefault('also_in', [])
             article.setdefault('score_reasons', [])
+            article.setdefault('is_stale', False)
+            article.setdefault('last_fetched_at', None)
             if is_generated_summary(article.get('summary')):
                 article['summary'] = ''
                 article['summary_source'] = ''
@@ -1430,8 +1904,69 @@ class HighSignalScraper:
         self.previous_by_id = {a['id']: a for a in articles if a.get('id')}
         if health and not self.health:
             self.health = {h['name']: h for h in health if h.get('name')}
+        if isinstance(data, dict):
+            state = data.get('scraper_state')
+            if state is not None:
+                self.load_scraper_state(state)
+            elif not self.source_batches:
+                self._migrate_source_batches(articles, health)
+            if isinstance(data.get('run_stats'), dict):
+                self.run_stats = dict(data['run_stats'])
         self.last_run = generated
         return articles
+
+    def scraper_state_payload(self):
+        return {
+            'version': 1,
+            'sources': copy.deepcopy(self.source_batches),
+        }
+
+    def load_scraper_state(self, payload):
+        if (not isinstance(payload, dict) or payload.get('version') != 1 or
+                not isinstance(payload.get('sources'), dict)):
+            raise store.StoreUnavailable('Invalid scraper state')
+        batches = {}
+        for key, batch in payload['sources'].items():
+            if (not isinstance(key, str) or not isinstance(batch, dict) or
+                    not isinstance(batch.get('name'), str) or
+                    not isinstance(batch.get('config_fingerprint'), str) or
+                    parse_utc(batch.get('last_good_fetch_at')) is None or
+                    not isinstance(batch.get('articles'), list)):
+                raise store.StoreUnavailable('Invalid source batch in scraper state')
+            if len(batch['articles']) > 50 or any(
+                    not isinstance(article, dict) or not article.get('id')
+                    for article in batch['articles']):
+                raise store.StoreUnavailable('Invalid articles in scraper state')
+            batches[key] = copy.deepcopy(batch)
+        self.source_batches = batches
+
+    def _migrate_source_batches(self, articles, health):
+        """Seed only source leads recoverable from a legacy dashboard."""
+        health_by_name = {row.get('name'): row for row in health
+                          if isinstance(row, dict)}
+        for source in self.sources:
+            row = health_by_name.get(source['name']) or {}
+            fetched = row.get('last_success')
+            if parse_utc(fetched) is None:
+                continue
+            try:
+                normalized = normalize_source(source)
+            except SourceConfigError:
+                continue
+            batch_articles = [copy.deepcopy(article) for article in articles
+                              if article.get('source') == source['name']]
+            if not batch_articles:
+                continue
+            for article in batch_articles:
+                article['last_fetched_at'] = fetched
+                article['is_stale'] = False
+                article['also_in'] = []
+            self.source_batches[source_key(source)] = {
+                'name': source['name'],
+                'config_fingerprint': config_fingerprint(normalized),
+                'last_good_fetch_at': fetched,
+                'articles': batch_articles[:normalized['limit']],
+            }
 
     def save_health(self, filename='health.json'):
         # Hosted health is already included in cache.json. It must not be a

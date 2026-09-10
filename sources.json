@@ -32,12 +32,15 @@
     {
       "name": "Last Week in AI",
       "url": "https://lastweekin.ai/",
-      "type": "static",
+      "type": "rss",
       "tier": "medium",
       "category": "AI Research",
       "enabled": true,
-      "selector": "article h2 a, .post-title a, h2 a",
-      "fallback": ".entry-title a"
+      "feed_url": "https://lastweekin.ai/feed",
+      "allowed_hosts": [
+        "lastweekin.ai"
+      ],
+      "note": "Publisher-advertised RSS feed, verified with 15 usable entries on 2026-09-10."
     },
     {
       "name": "Import AI (Jack Clark)",
@@ -92,9 +95,10 @@
       "type": "static",
       "tier": "high",
       "category": "AI Research",
-      "enabled": true,
+      "enabled": false,
       "selector": "article a, .post-link, h2 a",
-      "fallback": ".entry-title a"
+      "fallback": ".entry-title a",
+      "note": "The site is an annual report landing page, not an article listing. Discovery found no usable feed or selector on 2026-09-10."
     },
     {
       "name": "Hacker News",
@@ -170,12 +174,15 @@
     {
       "name": "The Information",
       "url": "https://www.theinformation.com/",
-      "type": "static",
+      "type": "rss",
       "tier": "high",
       "category": "Big Tech",
       "enabled": true,
-      "selector": "article h2 a, .story-title a, h2 a",
-      "fallback": "a[href*='/news/']"
+      "feed_url": "https://www.theinformation.com/feed",
+      "allowed_hosts": [
+        "theinformation.com"
+      ],
+      "note": "Official Atom feed, verified with 15 usable entries on 2026-09-10; replaces the homepage path that returned HTTP 403."
     },
     {
       "name": "Axios Pro Rata",
@@ -183,9 +190,9 @@
       "type": "rss",
       "tier": "high",
       "category": "Funding & M&A",
-      "enabled": true,
+      "enabled": false,
       "feed_url": "https://api.axios.com/feed/",
-      "note": "Axios publishes no Pro Rata-specific feed; this is the site-wide Axios feed, so it carries general news alongside dealmaking."
+      "note": "Disabled: Axios publishes no Pro Rata-specific feed; the configured site-wide feed returned unrelated general news in the 2026-09-10 audit."
     },
     {
       "name": "StrictlyVC",
@@ -203,9 +210,9 @@
       "type": "rss",
       "tier": "high",
       "category": "Funding & M&A",
-      "enabled": true,
+      "enabled": false,
       "feed_url": "https://fortune.com/feed/",
-      "note": "Fortune publishes no Term Sheet-specific feed; this is the site-wide Fortune feed."
+      "note": "Disabled: Fortune publishes no Term Sheet-specific feed; the configured site-wide feed returned unrelated general news and the newsletter URL returned 404 in the 2026-09-10 audit."
     },
     {
       "name": "The Information Startup",
@@ -213,9 +220,10 @@
       "type": "static",
       "tier": "high",
       "category": "Funding & M&A",
-      "enabled": true,
+      "enabled": false,
       "selector": "h3 a",
-      "fallback": "a[href*='/articles/']"
+      "fallback": "a[href*='/articles/']",
+      "note": "Disabled: the topic page returned HTTP 403 and the official feed is site-wide, not startup-specific, in the 2026-09-10 audit."
     },
     {
       "name": "Y Combinator News",

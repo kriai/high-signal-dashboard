@@ -6,6 +6,7 @@ exercise the actual scraper, snapshot persistence and Flask endpoints.
 import copy
 import json
 import os
+import tempfile
 import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -60,6 +61,8 @@ class HobbyStorageTests(unittest.TestCase):
         app.scraper.health = {}
         app.scraper.articles = []
         app.scraper.previous_by_id = {}
+        app.scraper.source_batches = {}
+        app.scraper.run_stats = {}
         app.scraper.last_run = None
         app.refresh_job.update(state='idle', error=None)
         self.client = app.app.test_client()
@@ -128,9 +131,27 @@ class HobbyStorageTests(unittest.TestCase):
         self.assertEqual(kwargs['headers']['x-add-random-suffix'], '0')
         payload = json.loads(kwargs['data'])
         self.assertEqual(payload['health'], [health])
+        self.assertEqual(payload['scraper_state']['version'], 1)
+        self.assertIn('example', payload['scraper_state']['sources'])
         self.assertEqual(payload['articles'][0]['summary'], 'Prepared publisher summary.')
         self.assertEqual(payload['articles'][0]['first_seen'], ARTICLE['first_seen'])
         self.assertEqual(self.backend.operations['writes'], 1)
+
+    def test_legacy_job_writes_source_diagnostics_artifact(self):
+        health = {'name': 'Example', 'state': 'ok', 'articles': 1}
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, 'scrape-report.json')
+            with patch.dict(os.environ, {'SCRAPE_REPORT_PATH': path}), \
+                    patch.object(app.scraper, 'scrape_source', return_value=(
+                        [copy.deepcopy(ARTICLE)], health)), \
+                    patch('scraper.time.sleep'), \
+                    patch.object(app, 'warm_summaries', return_value=(0, 0)):
+                self.assertEqual(scrape_job.main(), 0)
+            with open(path) as handle:
+                report = json.load(handle)
+        self.assertEqual(report['status'], 'accepted')
+        self.assertEqual(report['run']['succeeded'], 1)
+        self.assertEqual(report['sources'], [health])
 
     def test_source_disable_writes_only_config_and_survives_reload(self):
         app.load_state()

@@ -29,6 +29,8 @@ from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, render_template, request
 
 import store
+import source_tools as source_tool_helpers
+from source_config import is_public_url as config_is_public_url
 from scraper import (CATEGORIES, HighSignalScraper, categorize,
                      is_challenge_page, is_generated_summary, metadata_summary,
                      write_json_atomic)
@@ -250,6 +252,7 @@ def warm_summaries(limit=None, min_score=None, budget=None):
 
     targets = [a for a in cached_articles
                if not has_cached_summary(a)
+               and not a.get('is_stale')
                and a.get('signal_score', 0) >= min_score
                and is_public_url(a.get('link') or '')]
     targets.sort(key=lambda a: a.get('signal_score', 0), reverse=True)
@@ -319,17 +322,26 @@ def scrape_and_cache(job_id=None, deadline=None, warm=False):
                            finished_at=None)
 
     print('🔄 Running scrape...')
+    attempted_articles = []
     previous = (cached_articles, last_scrape_at, copy.deepcopy(scraper.health),
                 scraper.articles, scraper.previous_by_id, scraper.last_run,
+                copy.deepcopy(scraper.source_batches), dict(scraper.run_stats),
                 dict(summary_cache))
     try:
-        articles = scraper.scrape_all(progress=_progress, deadline=deadline)
+        articles = scraper.scrape_all(
+            progress=_progress, deadline=deadline, persist_health=False)
+        attempted_articles = articles
+        from pipeline import _coverage, _validate_run, _write_run_report
+        coverage = _coverage(scraper)
+        _validate_run(articles, coverage)
         _summarize(articles)
         cached_articles = articles
         if warm:
             warmed, attempted = warm_summaries()
             print(f'📝 Warmed {warmed}/{attempted} summaries')
+        scraper.save_health()
         scraper.save_to_cache()
+        _write_run_report(scraper, articles, coverage)
         last_scrape_at = _parse(scraper.last_run)
         state_error = None
         print(f'✅ Cached {len(articles)} articles')
@@ -337,8 +349,12 @@ def scrape_and_cache(job_id=None, deadline=None, warm=False):
     except Exception as exc:                                 # noqa: BLE001
         # A failed scrape must not take the server with it; the previous cache
         # stays served and the UI surfaces the error.
+        from pipeline import _coverage, _write_run_report
+        _write_run_report(scraper, attempted_articles or scraper.articles,
+                          _coverage(scraper), str(exc))
         (cached_articles, last_scrape_at, scraper.health, scraper.articles,
-         scraper.previous_by_id, scraper.last_run, previous_summaries) = previous
+         scraper.previous_by_id, scraper.last_run, scraper.source_batches,
+         scraper.run_stats, previous_summaries) = previous
         summary_cache.clear()
         summary_cache.update(previous_summaries)
         print(f'❌ Scrape failed: {exc}')
@@ -386,6 +402,7 @@ def load_state(allow_empty=False):
     candidate.health = {}
     candidate.articles = []
     candidate.previous_by_id = {}
+    candidate.source_batches = {}
     candidate.last_run = None
     if store.is_remote():
         # Reload sources too, so edits propagate between server instances.
@@ -398,7 +415,7 @@ def load_state(allow_empty=False):
         raise store.StoreUnavailable('No published feed is available yet')
     _summarize(articles)
     for field in ('sources', 'source_by_name', 'health', 'articles',
-                  'previous_by_id', 'last_run'):
+                  'previous_by_id', 'source_batches', 'run_stats', 'last_run'):
         setattr(scraper, field, getattr(candidate, field))
     cached_articles = articles
     last_scrape_at = _parse(candidate.last_run)
@@ -708,16 +725,7 @@ def is_public_url(url):
     metadata endpoint. Literal addresses are checked directly; hostnames are
     matched by name (this is a guard, not a sandbox — it does not resolve DNS).
     """
-    host = (urlparse(url).hostname or '').lower().rstrip('.')
-    if not host or host in BLOCKED_HOSTS or host.endswith('.local'):
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return True                      # a normal hostname
-    return not (address.is_private or address.is_loopback or
-                address.is_link_local or address.is_reserved or
-                address.is_multicast)
+    return config_is_public_url(url)
 
 
 @app.route('/api/sources')
@@ -766,65 +774,10 @@ def _write_sources(sources):
 
 def _clean_source_payload(payload, existing=None):
     """Validate an incoming source. Returns (source_dict, error_message)."""
-    source = dict(existing or {})
-
-    name = (payload.get('name') or source.get('name') or '').strip()
-    if not name:
-        return None, 'A name is required'
-    if len(name) > 80:
-        return None, 'Name is too long'
-    source['name'] = name
-
-    for field in EDITABLE_FIELDS:
-        if field not in payload:
-            continue
-        value = payload[field]
-        if field == 'enabled' or field == 'lock_category':
-            source[field] = bool(value)
-        elif field == 'limit':
-            try:
-                source['limit'] = max(1, min(50, int(value)))
-            except (TypeError, ValueError):
-                return None, 'Limit must be a number'
-        elif field == 'tier':
-            tier = str(value).lower().strip()
-            if tier not in ('high', 'medium', 'low', ''):
-                return None, 'Tier must be high, medium or low'
-            source['tier'] = tier or 'low'
-        elif field == 'type':
-            source_type = str(value or 'static').lower().strip()
-            if source_type not in ('static', 'rss', 'json'):
-                return None, 'Type must be static, rss or json'
-            source['type'] = source_type
-        else:
-            source[field] = str(value or '').strip()
-
-    url = source.get('url', '')
-    if not url.startswith('http://') and not url.startswith('https://'):
-        return None, 'URL must start with http:// or https://'
-    if not is_public_url(url):
-        return None, 'That URL points at a local or private address'
-
-    source['type'] = (source.get('type') or 'static').lower()
-    feed_url = (source.get('feed_url') or '').strip()
-    if feed_url:
-        if not feed_url.startswith('http://') and not feed_url.startswith('https://'):
-            return None, 'Feed URL must start with http:// or https://'
-        if not is_public_url(feed_url):
-            return None, 'Feed URL points at a local or private address'
-        source['feed_url'] = feed_url
-    else:
-        source.pop('feed_url', None)
-
-    if source['type'] == 'static':
-        if not source.get('selector'):
-            source['selector'] = 'h2 a, h3 a'
-    else:
-        source.pop('selector', None)
-        source.pop('fallback', None)
-
-    source.setdefault('enabled', True)
-    return source, None
+    try:
+        return source_tool_helpers.clean_source(payload, existing), None
+    except source_tool_helpers.SourceToolError as exc:
+        return None, str(exc)
 
 
 COMMON_HEADLINE_SELECTORS = (
@@ -1037,50 +990,14 @@ def discover_source():
     deterministic CSS candidates ranked by the same extraction path used by the
     scraper. The browser still chooses; this just removes selector guesswork.
     """
-    payload = request.get_json(silent=True) or {}
-    url = (payload.get('url') or '').strip()
-    if not url:
-        return jsonify({'error': 'A URL is required'}), 400
-    if not url.startswith('http://') and not url.startswith('https://'):
-        return jsonify({'error': 'URL must start with http:// or https://'}), 400
-    if not is_public_url(url):
-        return jsonify({'error': 'That URL points at a local or private address'}), 400
-
     try:
-        response = scraper.scraper.get(
-            url,
-            headers={'User-Agent': random.choice(scraper.user_agents)},
-            timeout=20,
-            allow_redirects=True
-        )
-    except Exception as exc:                              # noqa: BLE001
-        return jsonify({'error': f'{type(exc).__name__}: {str(exc)[:160]}'}), 502
-
-    if response.status_code != 200:
-        return jsonify({'error': f'HTTP {response.status_code}',
-                        'http_status': response.status_code}), 502
-    if is_challenge_page(response.text):
-        return jsonify({'error': 'Blocked by a bot challenge'}), 502
-
-    page_url = response.url or url
-    soup = BeautifulSoup(response.text, 'html.parser')
-    working_payload = dict(payload, url=page_url)
-
-    candidates = []
-    for feed_url in _feed_links(soup, page_url):
-        candidate = _discover_feed_candidate(working_payload, feed_url)
-        if candidate:
-            candidates.append(candidate)
-
-    candidates.extend(_discover_static_candidates(working_payload, soup))
-    candidates = candidates[:8]
-
-    return jsonify({
-        'url': url,
-        'fetched_url': page_url,
-        'count': len(candidates),
-        'candidates': candidates,
-    })
+        return jsonify(source_tool_helpers.discover_source(
+            scraper, request.get_json(silent=True) or {}))
+    except source_tool_helpers.SourceToolError as exc:
+        payload = {'error': str(exc)}
+        if exc.http_status is not None:
+            payload['http_status'] = exc.http_status
+        return jsonify(payload), exc.status
 
 
 @app.route('/api/sources/<name>', methods=['PATCH', 'DELETE'])
@@ -1121,26 +1038,11 @@ def test_source():
     This is the difference between "add a source and wait 30 minutes to find out
     it was wrong" and seeing the five headlines it would have produced.
     """
-    payload = request.get_json(silent=True) or {}
-    source, error = _clean_source_payload(dict(payload, name=payload.get('name') or 'Preview'))
-    if error:
-        return jsonify({'error': error}), 400
-
-    articles, health = scraper.scrape_source(dict(source, retries=1))
-
-    return jsonify({
-        'state': health['state'],
-        'http_status': health['http_status'],
-        'error': health['error'],
-        'duration_ms': health['duration_ms'],
-        'count': len(articles),
-        'preview': [{
-            'title': a['title'],
-            'link': a['link'],
-            'signal_score': a['signal_score'],
-            'category': a['category'],
-        } for a in articles[:8]],
-    })
+    try:
+        return jsonify(source_tool_helpers.test_source(
+            scraper, request.get_json(silent=True) or {}))
+    except source_tool_helpers.SourceToolError as exc:
+        return jsonify({'error': str(exc)}), exc.status
 
 
 # == Refresh ==================================================================

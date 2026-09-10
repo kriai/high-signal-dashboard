@@ -21,6 +21,26 @@ class SourceToolsTests(unittest.TestCase):
             clean_source({'name': 'Example', 'url': 'https://example.com',
                           'enabled': 'false'})
 
+    def test_source_validation_rejects_invalid_selectors(self):
+        with self.assertRaisesRegex(SourceToolError, 'Invalid CSS selector'):
+            clean_source({'name': 'Example', 'url': 'https://example.com',
+                          'selector': '[broken'})
+
+    def test_source_validation_preserves_bounded_strategies(self):
+        source = clean_source({
+            'name': 'Example', 'url': 'https://example.com',
+            'retention_hours': 24, 'allow_empty': True,
+            'fetch_strategies': [
+                {'id': 'feed', 'type': 'rss',
+                 'url': 'https://example.com/feed.xml'},
+                {'id': 'page', 'type': 'static',
+                 'url': 'https://example.com/news',
+                 'selectors': ['article h2 a']},
+            ],
+        })
+        self.assertEqual(source['retention_hours'], 24)
+        self.assertEqual(len(source['fetch_strategies']), 2)
+
     def test_job_claims_and_persists_bounded_result(self):
         client = SqliteD1Client()
         client.query(

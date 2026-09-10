@@ -99,7 +99,9 @@ def _run_d1():
             os.environ.get('CLOUDFLARE_D1_API_TOKEN'))
         d1 = D1PublicationStore(client)
         active = d1.active_publication_id()
-        previous = previous_snapshot(d1.load_document(publication_id=active))
+        previous = previous_snapshot(
+            d1.load_document(publication_id=active),
+            d1.load_document('scraper_state', publication_id=active))
 
         # A workflow retry in the same slot should not create another
         # generation. Scheduled runs use off-peak :07/:37 once the workflow is

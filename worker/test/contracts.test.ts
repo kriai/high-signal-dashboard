@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canonicalCacheKey, derivedEtag, sortArticles, validatePublicUrl } from '../src/index.ts';
+import { canonicalCacheKey, derivedEtag, sortArticles, validatePublicUrl,
+  validateSource } from '../src/index.ts';
 
 const articles = [
   { id: 'a', title: 'A', link: 'https://example.com/a', source: 'Beta',
@@ -44,6 +45,33 @@ describe('owner URL validation', () => {
   it('accepts public HTTP URLs and strips no path data', () => {
     assert.equal(validatePublicUrl('https://example.com/feed?q=1', 'URL'),
       'https://example.com/feed?q=1');
+  });
+});
+
+describe('source configuration', () => {
+  it('preserves bounded fallback strategies and retention settings', () => {
+    const source = validateSource({
+      name: 'Example', url: 'https://example.com/', type: 'static',
+      retention_hours: 24, allow_empty: true,
+      allowed_hosts: ['example.com'], path_prefixes: ['/news/'],
+      fetch_strategies: [
+        { id: 'feed', type: 'rss', url: 'https://example.com/feed.xml' },
+        { id: 'html', type: 'static', url: 'https://example.com/news',
+          selectors: ['article h2 a'] },
+      ],
+    });
+    assert.equal(source.retention_hours, 24);
+    assert.equal(source.allow_empty, true);
+    assert.deepEqual(source.allowed_hosts, ['example.com']);
+    assert.equal((source.fetch_strategies as Record<string, unknown>[]).length, 2);
+  });
+
+  it('rejects unsafe strategy URLs and excessive retention', () => {
+    assert.throws(() => validateSource({ name: 'Bad', url: 'https://example.com',
+      retention_hours: 169 }), /between 0 and 168/);
+    assert.throws(() => validateSource({ name: 'Bad', url: 'https://example.com',
+      fetch_strategies: [{ type: 'rss', url: 'http:\/\/127.0.0.1/feed' }] }),
+    /local or private/);
   });
 });
 
