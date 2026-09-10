@@ -153,6 +153,10 @@ store or malformed JSON stops the job without overwriting saved state.
 | `SUMMARY_WARM_LIMIT` | 100 | Articles the CI job pre-fetches summaries for before publishing a scrape. 0 disables it |
 | `SUMMARY_WARM_MIN_SCORE` | 60 | Score floor for that pass, matching the dashboard's own 60+ filter |
 | `SUMMARY_WARM_BUDGET_SECONDS` | 90 | Wall-clock cap on it, so a run of slow pages cannot stretch the job |
+| `SUMMARY_WARM_WORKERS` | 8 | Parallel summary fetches in that pass |
+| `SCRAPE_BUDGET_SECONDS` | 600 | Wall-clock cap on the listing pass. Sources the deadline cuts off are recorded as unvisited and keep their retained articles rather than counting as failures |
+| `SCRAPE_MIN_SOURCE_COVERAGE` | 0.5 | Share of enabled sources that must succeed *in this run* before the scrape may replace the active publication, rounded up. Clamped to 0–1; a run where every enabled source failed is rejected at any setting |
+| `SCRAPE_REPORT_PATH` | — | Writes a per-source JSON diagnostic report to this path, including rejected runs. The scrape workflow sets it and uploads the file as an artifact |
 
 Scrape frequency lives in `.github/workflows/scrape.yml`.
 
@@ -223,6 +227,16 @@ Run the offline regression suite before publishing:
 ```bash
 python -m unittest discover -s tests -v
 node --check static/js/dashboard.js
+npm test
+```
+
+To check what the sources actually return from a given environment without
+touching published state, run the read-only audit — it never publishes, never
+writes cache or health, and never edits source config:
+
+```bash
+python scripts/audit_sources.py --output /tmp/source-audit.json
+python scripts/audit_sources.py --d1 --source "The Information"
 ```
 
 ## Known rough edges
@@ -238,13 +252,26 @@ node --check static/js/dashboard.js
 - Cached headlines are readable by anyone with the blob URL, since the store is
   public. They are public news headlines, so this is not a leak, but it is worth
   knowing.
-- **Five sources 403 from CI that work from a laptop**: Ben's Bites, Deep
-  Learning Weekly, Last Week in AI, The Machine Learning Engineer, The
-  Information. The same URLs return 200 from a residential IP, so this is
-  IP reputation, not a broken selector — four of the five are Substack-hosted
-  and Substack blocks datacenter ranges, which is what a GitHub Actions runner
-  has. A scrape that 403s contributes no articles, so those sources drop off
-  the dashboard until they succeed again (pre-existing behaviour: carry-forward
-  only covers sources a pass did not *reach*, not ones that failed). Fixing it
-  needs an egress proxy with residential IPs, or running the job somewhere
-  other than Actions.
+- **Sources that 403 from CI but work from a laptop**: historically Ben's Bites,
+  Deep Learning Weekly, Last Week in AI, The Machine Learning Engineer and The
+  Information. The same URLs return 200 from a residential IP, so this is IP
+  reputation, not a broken selector — most are Substack-hosted, and Substack
+  blocks the datacenter ranges a GitHub Actions runner has. Two of them now read
+  a publisher-advertised feed instead (`sources.json` records which). A 403 is
+  still a 403: the scraper classifies it as `blocked`, stops re-requesting the
+  same endpoint in that run, and only tries endpoints the source explicitly
+  configures. What changed is the fallout — a failing source now keeps serving
+  its last good batch for `retention_hours` (72 by default, per-source, 0–168)
+  with `is_stale` set on those rows, instead of dropping off the dashboard
+  immediately. Health still reports the failure and the retained count; stale
+  content is never presented as a fresh success. Genuinely fixing the access
+  needs an egress proxy with residential IPs, or running the job somewhere other
+  than Actions.
+- **Published health is the last *published* health.** If a run trips the
+  `SCRAPE_MIN_SOURCE_COVERAGE` gate, the whole previous publication stays
+  active — including its health table — and the job exits nonzero. The current
+  attempt's per-source outcomes are in the `scrape-source-diagnostics` artifact,
+  not on the dashboard.
+- **`sources.json` is not authoritative in D1 mode.** It is the local/Blob seed.
+  Repairing a source in production means an admin update against the D1 `sources`
+  table; editing the file alone changes nothing hosted.
