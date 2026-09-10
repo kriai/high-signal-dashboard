@@ -1,19 +1,25 @@
 /* ---------------------------------------------------------------------------
    High Signal dashboard.
 
-   Four layouts over one corpus:
+   Four layouts over one corpus, each shaped by what the reader came to do:
 
-     feed        every source merged into a single stream, one headline per line
-     sources     a panel per source, including the ones that are failing
-     categories  a panel per category
-     saved       the reading list, stored locally as snapshots
+     feed        one stream, grouped by day, numbered, source and topic under
+                 each headline
+     categories  a sticky index of topics beside one continuous page of topic
+                 sections, four headlines each until a section is expanded
+     sources     a board of publisher cards, three headlines each, no column
+                 scrolls inside another column
+     saved       the reading list, stored locally as snapshots, in the feed's
+                 own layout
+
+   None of the four scrolls inside itself. The page scroll is the only scroll,
+   which is what lets a headline be as long as it needs to be.
 
    The whole corpus is a few hundred headlines, so it is fetched once from
-   /api/feed and every filter (score threshold, text query, source, category,
+   /api/dashboard and every filter (score threshold, text query, source, category,
    unread) plus both groupings run client-side. That keeps switching views and
    filtering instant. Only the feed's order comes from the server, because
-   ordering is the one thing the server can express better than the client (see
-   /api/feed?sort=).
+   ordering uses the same small parity-tested helpers as the compatibility API.
 
    Three things live only in the browser, because they are per-person and the
    server has no accounts: read state, the reading list, and hidden headlines.
@@ -28,14 +34,30 @@
 (function () {
   'use strict';
 
-  var POLL_MS = 60000;
+  var POLL_MS = 300000;
   var JOB_POLL_MS = 1500;
-  var VIEWS = ['feed', 'sources', 'categories', 'saved'];
+  var VIEWS = ['feed', 'categories', 'sources', 'saved'];
   var SORTS = ['score', 'recent', 'mixed'];
   var UNCATEGORIZED = 'Other';
   var READ_CAP = 4000;
   var HIDDEN_CAP = 1000;
   var SAVED_CAP = 500;
+
+  // How much of each layout opens unasked. Four headlines is the most a topic
+  // section can show without the next topic falling off the screen; three is
+  // the same judgement in a four-column board.
+  var TOPIC_PREVIEW = 4;
+  var SOURCE_PREVIEW = 3;
+  var FEED_PAGE = 30;
+
+  // `title` never reaches the page: it names the view for the document outline
+  // and for anything reading the page aloud. Only the placeholder is seen.
+  var VIEW_COPY = {
+    feed:       { title: 'The feed',  search: 'Search the feed…' },
+    categories: { title: 'Categories', search: 'Search articles…' },
+    sources:    { title: 'Sources',   search: 'Find a source or article…' },
+    saved:      { title: 'Saved',     search: 'Search saved headlines…' }
+  };
 
   var KNOWN_CATEGORIES = [
     'Security', 'Policy & Regulation', 'Funding & M&A', 'Chips & Hardware',
@@ -43,26 +65,6 @@
     'AI Tools & Agents', 'Engineering & Open Source', 'Big Tech',
     'Business & Markets', 'Other'
   ];
-
-  // Editorial category art. The names remain the application's taxonomy; this
-  // only selects a restrained icon and colour treatment for the category view.
-  var CATEGORY_ART = {
-    'Chips & Hardware':          { icon: 'cpu',       tone: 'green' },
-    'Funding & M&A':             { icon: 'landmark',  tone: 'violet' },
-    'Big Tech':                  { icon: 'buildings', tone: 'blue' },
-    'Models & Releases':         { icon: 'sparkles',  tone: 'teal' },
-    'Policy & Regulation':       { icon: 'landmark',  tone: 'orange' },
-    'Crypto & Fintech':          { icon: 'bitcoin',   tone: 'amber' },
-    'Security':                  { icon: 'shield',    tone: 'red' },
-    'AI Research':               { icon: 'flask',     tone: 'blue' },
-    'Enterprise AI':             { icon: 'briefcase', tone: 'green' },
-    'Data & Infrastructure':     { icon: 'server',    tone: 'violet' },
-    'Science & Space':           { icon: 'orbit',     tone: 'blue' },
-    'AI Tools & Agents':         { icon: 'bot',       tone: 'teal' },
-    'Engineering & Open Source': { icon: 'code',      tone: 'violet' },
-    'Business & Markets':        { icon: 'trending',  tone: 'green' },
-    'Other':                     { icon: 'newspaper', tone: 'slate' }
-  };
 
   var CATEGORY_ORDER = [
     'Chips & Hardware', 'Funding & M&A', 'Big Tech', 'Models & Releases',
@@ -91,22 +93,33 @@
     nextSync: null,
     selectedId: null,
     expandedId: null,
+    // Which topic sections and source cards the reader has opened past their
+    // preview. Names, not indexes, so a rescrape cannot expand the wrong one.
+    openTopics: {},
+    openSources: {},
+    limit: FEED_PAGE,
     job: null,
-    jobTimer: null
+    jobTimer: null,
+    adminToken: '',        // deliberately memory-only
+    adminSources: {},
+    sourceToolJob: null,
+    sourceToolTimer: null,
+    offlineSnapshot: false
   };
 
   var el = {};
   [
-    'grid', 'search', 'scoreSwitch', 'viewSwitch', 'sortSwitch', 'refreshBtn',
-    'themeBtn', 'clearBtn', 'resultCount', 'lastUpdated', 'toasts', 'nextSync',
+    'grid', 'reading', 'search', 'scoreSwitch', 'viewSwitch', 'sortSwitch',
+    'refreshBtn', 'themeBtn', 'resultCount', 'lastUpdated', 'toasts', 'nextSync',
     'statusDot', 'healthBtn', 'healthCount', 'sourcesBtn', 'helpBtn',
     'progress', 'progressBar', 'progressLabel', 'banner', 'bannerText',
-    'bannerAction', 'filters', 'newPill', 'unreadBtn', 'exportBtn',
-    'exportMenu', 'markReadBtn', 'sourcesDialog', 'helpDialog', 'sourceList',
+    'bannerAction', 'filters', 'newPill', 'unreadBtn', 'moreBtn',
+    'moreMenu', 'markReadBtn', 'sourcesDialog', 'helpDialog', 'sourceList',
     'sourcesSummary', 'addSource', 'addSourceForm', 'discoverSourceBtn',
     'testSourceBtn', 'testPreview', 'sourceDiscovery', 'sourceType',
     'sourceFeedUrl', 'sourceSelector', 'sourceFallback', 'categorySelect',
-    'refreshFromDialog'
+    'refreshFromDialog', 'viewHead', 'viewTitle', 'catIndex',
+    'catIndexNav', 'jumpBar', 'jump', 'adminToken', 'adminStatus', 'stateFile'
   ].forEach(function (id) { el[id] = document.getElementById(id); });
   el.themeIcon = document.querySelector('[data-theme-icon]');
 
@@ -202,6 +215,7 @@
   var pinnedIndex = {};
   store.pinned.forEach(function (name) { pinnedIndex[name] = true; });
 
+
   function isRead(id) { return readIndex[id] === true; }
   function isSaved(id) { return savedIndex[id] !== undefined; }
   function isHidden(id) { return hiddenIndex[id] === true; }
@@ -279,6 +293,104 @@
       store.hidden = store.hidden.slice(0, HIDDEN_CAP);
     }
     writeJson('hs.hidden', store.hidden);
+  }
+
+  /* -- Moving reading state between addresses -----------------------------
+     localStorage is scoped to one origin, so a reader who follows the site to
+     a new hostname arrives with nothing. This exports the four lists as a file
+     and merges one back in. Merging, not replacing: importing an old file
+     should never throw away what has been read since. */
+
+  var STATE_FILE_KIND = 'high-signal-reading-state';
+
+  function readingStateDocument() {
+    return {
+      kind: STATE_FILE_KIND,
+      version: 1,
+      exported_at: new Date().toISOString(),
+      origin: location.origin,
+      read: store.read,
+      saved: store.saved,
+      hidden: store.hidden,
+      pinned: store.pinned
+    };
+  }
+
+  function idList(value, cap) {
+    if (!Array.isArray(value)) return [];
+    var out = [];
+    var seen = {};
+    value.forEach(function (entry) {
+      if (typeof entry !== 'string' || !entry || seen[entry]) return;
+      seen[entry] = true;
+      if (out.length < cap) out.push(entry);
+    });
+    return out;
+  }
+
+  function savedList(value) {
+    if (!Array.isArray(value)) return [];
+    return value.filter(function (item) {
+      return item && typeof item === 'object' &&
+        typeof item.id === 'string' && item.id &&
+        typeof item.title === 'string' && safeUrl(item.link) !== '#';
+    });
+  }
+
+  // Existing entries win, so ids keep the snapshot this browser already has.
+  function mergeReadingState(document) {
+    if (!document || typeof document !== 'object' || document.kind !== STATE_FILE_KIND) {
+      throw new Error('That file is not a High Signal reading state export.');
+    }
+    var added = { read: 0, saved: 0, hidden: 0, pinned: 0 };
+
+    idList(document.read, READ_CAP).forEach(function (id) {
+      if (isRead(id)) return;
+      readIndex[id] = true;
+      store.read.push(id);
+      added.read += 1;
+    });
+    store.read = store.read.slice(0, READ_CAP);
+
+    idList(document.hidden, HIDDEN_CAP).forEach(function (id) {
+      if (isHidden(id)) return;
+      hiddenIndex[id] = true;
+      store.hidden.push(id);
+      added.hidden += 1;
+    });
+    store.hidden = store.hidden.slice(0, HIDDEN_CAP);
+
+    savedList(document.saved).forEach(function (item) {
+      if (isSaved(item.id)) return;
+      savedIndex[item.id] = item;
+      store.saved.push(item);
+      added.saved += 1;
+    });
+    store.saved.sort(function (a, b) {
+      return String(b.saved_at || '').localeCompare(String(a.saved_at || ''));
+    });
+    store.saved = store.saved.slice(0, SAVED_CAP);
+
+    idList(document.pinned, 100).forEach(function (name) {
+      if (isPinned(name)) return;
+      pinnedIndex[name] = true;
+      store.pinned.push(name);
+      added.pinned += 1;
+    });
+
+    // Rebuild the indexes the caps may have trimmed, then persist once.
+    readIndex = {};
+    store.read.forEach(function (id) { readIndex[id] = true; });
+    hiddenIndex = {};
+    store.hidden.forEach(function (id) { hiddenIndex[id] = true; });
+    savedIndex = {};
+    store.saved.forEach(function (item) { savedIndex[item.id] = item; });
+
+    writeJson('hs.read', store.read);
+    writeJson('hs.hidden', store.hidden);
+    writeJson('hs.saved', store.saved);
+    writeJson('hs.pinned', store.pinned);
+    return added;
   }
 
   /* == Formatting ========================================================== */
@@ -420,6 +532,45 @@
     });
   }
 
+  // What is actually on the page right now. The feed pages itself, so "copy
+  // visible links" and "mark everything shown as read" have to mean the rows
+  // the reader can see, not the whole filtered corpus behind them.
+  function renderedArticles() {
+    var articles = visibleArticles();
+    return (state.view === 'feed' || state.view === 'saved')
+      ? articles.slice(0, state.limit)
+      : articles;
+  }
+
+  // Expanding a section is a reading decision, not a filter, so it survives a
+  // rescrape and is deliberately not written to localStorage or the URL.
+  function toggleOpen(set, name, anchorPrefix) {
+    var closing = set[name] === true;
+    if (closing) delete set[name];
+    else set[name] = true;
+
+    var offset = window.scrollY;
+    render();
+    // Collapsing pulls the page up from under the reader, so put them back at
+    // the head of the section they just closed. Expanding adds below the fold
+    // and needs nothing but the scroll position they already had.
+    if (closing) scrollToAnchor(anchorPrefix + slug(name), true);
+    else window.scrollTo(0, offset);
+  }
+
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  function scrollToAnchor(id, instant) {
+    var smooth = !instant && !reducedMotion.matches;
+    var options = { behavior: smooth ? 'smooth' : 'auto', block: 'start' };
+    if (id === 'top') {
+      window.scrollTo({ top: 0, behavior: options.behavior });
+      return;
+    }
+    var target = document.getElementById(id);
+    if (target) target.scrollIntoView(options);
+  }
+
   // Buckets articles by `key`, biggest bucket first, then alphabetically, with
   // the catch-all category pinned last so it never leads the page.
   function groupBy(articles, key) {
@@ -484,6 +635,16 @@
     return activeFilters().length > 0;
   }
 
+  // The pills speak for the filters that have no control of their own. The
+  // score floor and unread-only are switched on in plain sight in the view
+  // head, so a pill for either is the same state said twice -- and, when it
+  // was the only filter, a whole row of the page spent saying it.
+  function pillFilters() {
+    return activeFilters().filter(function (pill) {
+      return pill.kind !== 'score' && pill.kind !== 'unread';
+    });
+  }
+
   /* == Rendering =========================================================== */
 
   function icon(name, className) {
@@ -491,21 +652,50 @@
            '<use href="#i-' + name + '"/></svg>';
   }
 
-  // Per-row controls are deliberately out of the tab sequence. With a few
-  // hundred rows, six tab stops each would put the toolbar hundreds of presses
-  // away; the keyboard reaches these through j/k plus s, x and Space instead,
-  // and the search box filters by source name for the same effect as a chip.
-  function chip(text, modifier, action) {
-    var tag = action ? 'button' : 'span';
-    var attrs = action
-      ? ' type="button" tabindex="-1" data-act="' + action + '" data-value="' +
-        escapeHtml(text) + '" title="Filter to ' + escapeHtml(text) + '"'
-      : '';
-    return '<' + tag + ' class="chip' + (modifier ? ' chip--' + modifier : '') +
-           (action ? ' chip--action' : '') + '"' + attrs + '>' +
-           escapeHtml(text) + '</' + tag + '>';
+  function slug(name) {
+    return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'x';
   }
 
+  // Metadata under a headline is a sentence, not a row of pills: plain words at
+  // one size, separated by a middle dot. The two that filter are still buttons,
+  // they just do not dress like one.
+  function metaLine(parts) {
+    return parts.filter(Boolean).join('<span class="row__dot" aria-hidden="true">·</span>');
+  }
+
+  function metaFilter(kind, value, className) {
+    return '<button type="button" tabindex="-1" class="' + className +
+      '" data-act="filter-' + kind + '" data-value="' + escapeHtml(value) +
+      '" title="Show only ' + escapeHtml(value) + '">' + escapeHtml(value) + '</button>';
+  }
+
+  function metaSource(article) {
+    return metaFilter('source', article.source, 'row__source');
+  }
+
+  function metaTopic(article) {
+    return metaFilter('category', categoryOf(article), 'row__topic');
+  }
+
+  function metaAge(article) {
+    var age = ageOf(article);
+    if (!age.text) return '';
+    return '<span class="row__age' + (age.estimated ? ' row__age--est' : '') +
+      '" title="' + escapeHtml(age.title) + '">' + escapeHtml(age.text) + '</span>';
+  }
+
+  function metaAlso(article) {
+    var also = article.also_in || [];
+    if (!also.length) return '';
+    return '<span class="row__also" title="Also carried by ' +
+      escapeHtml(also.join(', ')) + '">+' + also.length + '</span>';
+  }
+
+  // Per-row controls are deliberately out of the tab sequence. With a few
+  // hundred rows, five tab stops each would put the app's own controls hundreds
+  // of presses away; the keyboard reaches these through j/k plus s, x and
+  // Space instead, and the search box filters by source name as well.
   function iconButton(action, iconName, label, pressed) {
     return '<button type="button" tabindex="-1" class="row__icon" data-act="' + action + '"' +
       (pressed === undefined ? '' : ' aria-pressed="' + (pressed ? 'true' : 'false') + '"') +
@@ -575,28 +765,17 @@
     '</div>';
   }
 
-  // A row carries whatever context its surroundings do not. Inside a source
-  // panel the header already names the source, so there is none; a category
-  // panel adds the source under the title; the flat feed adds source and
-  // category to the right of the title, which keeps every row one line tall.
+  // A row carries whatever context its surroundings do not, and never more than
+  // one line of it. The headline is the same size in every layout; only the
+  // sentence under it changes -- source and topic in the feed, source and date
+  // inside a topic section, topic and date inside a source card, where the card
+  // header has already said the publisher's name.
   function renderRow(article, query, options) {
     var opts = options || {};
     var score = scoreOf(article);
-    var age = ageOf(article);
     var id = escapeHtml(article.id);
     var expanded = state.expandedId === article.id;
     var saved = isSaved(article.id);
-
-    var title = '<span class="row__title">' + highlight(article.title, query) + '</span>';
-    var articleLink = '<a class="row__link" href="' + escapeHtml(safeUrl(article.link)) + '"' +
-      ' target="_blank" rel="noopener noreferrer" data-act="open">' + title + '</a>';
-    // Category metadata is interactive, so it must sit beside the article link
-    // rather than inside it. The wrapper still keeps the source directly below
-    // the headline without nesting a button in an anchor.
-    var body = opts.meta
-      ? '<span class="row__main">' + articleLink +
-        '<span class="row__meta">' + opts.meta + '</span></span>'
-      : articleLink;
 
     return '<li class="row' + (opts.className ? ' ' + opts.className : '') + '"' +
       ' data-id="' + id + '"' +
@@ -604,124 +783,214 @@
       ' data-saved="' + (saved ? 'true' : 'false') + '"' +
       (state.selectedId === article.id ? ' data-selected="true"' : '') + '>' +
       '<div class="row__line">' +
-        '<button type="button" class="badge badge--sm badge--' + scoreTone(score) +
-        ' row__score" data-act="expand" aria-expanded="' + (expanded ? 'true' : 'false') +
-        '" title="Signal score ' + score + ' — click for the breakdown">' + score + '</button>' +
-        body +
-        (opts.tags ? '<span class="row__tags">' + opts.tags + '</span>' : '') +
-        (age.text
-          ? '<span class="row__age' + (age.estimated ? ' row__age--est' : '') +
-            '" title="' + escapeHtml(age.title) + '">' + escapeHtml(age.text) + '</span>'
+        (opts.position
+          ? '<span class="row__pos" aria-hidden="true">' + opts.position + '</span>'
           : '') +
-        '<span class="row__icons">' +
+        '<div class="row__body">' +
+          '<a class="row__link" href="' + escapeHtml(safeUrl(article.link)) + '"' +
+          ' target="_blank" rel="noopener noreferrer" data-act="open">' +
+          '<span class="row__title">' + highlight(article.title, query) + '</span></a>' +
+          '<p class="row__meta">' + (opts.meta || '') + '</p>' +
+        '</div>' +
+        '<div class="row__tools">' +
+          // The score no longer wears a badge. It is the quietest thing on the
+          // line and it is still the door to its own arithmetic.
+          '<button type="button" tabindex="-1" class="row__score" data-act="expand"' +
+          ' aria-expanded="' + (expanded ? 'true' : 'false') +
+          '" title="Signal score ' + score + ' — open the breakdown"' +
+          ' aria-label="Signal score ' + score + '. Open the breakdown">' + score + '</button>' +
           iconButton('save', saved ? 'bookmark-on' : 'bookmark',
                      saved ? 'Remove from saved' : 'Save for later', saved) +
           iconButton('hide', 'x', 'Hide this headline') +
-        '</span>' +
+        '</div>' +
       '</div>' +
       (expanded ? renderDetail(article) : '') +
     '</li>';
   }
 
-  function feedTags(article) {
-    var also = (article.also_in || []).length;
-    return chip(article.source, 'source', 'filter-source') +
-      chip(categoryOf(article), 'category', 'filter-category') +
-      (also ? '<span class="chip chip--also" title="' +
-        escapeHtml((article.also_in || []).join(', ')) + '">+' + also + '</span>' : '');
-  }
+  /* -- Feed --------------------------------------------------------------- */
 
-  function renderFeed(articles, query) {
-    // Day headers only earn their space when the list is actually in date
-    // order; in score order they would cut the ranking into arbitrary blocks.
-    var grouped = state.sort === 'recent' && state.view === 'feed';
-    var html = '';
-    var currentDay = null;
-
-    articles.forEach(function (article) {
-      if (grouped) {
-        var day = dayBucket(ageOf(article).date);
-        if (day !== currentDay) {
-          if (currentDay !== null) html += '</ol></section>';
-          html += '<section class="daygroup"><h2 class="daygroup__title">' +
-                  escapeHtml(day) + '</h2><ol class="card feed">';
-          currentDay = day;
-        }
-      }
-      html += renderRow(article, query, {
-        tags: feedTags(article),
-        className: 'row--feed'
-      });
-    });
-
-    if (grouped) return currentDay === null ? '' : html + '</ol></section>';
-    return '<ol class="card feed">' + html + '</ol>';
-  }
-
-  function renderPanel(group, query, showSource) {
-    var high = group.articles.filter(function (a) {
-      return scoreOf(a) >= state.thresholds.high;
-    }).length;
-    var share = Math.round((high / group.articles.length) * 100);
-    var name = escapeHtml(group.name);
-    var sub = showSource
-      ? plural(distinct(group.articles, function (a) { return a.source; }), 'source')
-      : '';
-
-    if (showSource) {
-      var art = CATEGORY_ART[group.name] || CATEGORY_ART.Other;
-      var pinned = isPinned(group.name);
-      var pinLabel = (pinned ? 'Unpin ' : 'Pin ') + group.name;
-      return '<section class="card panel panel--category" data-pinned="' +
-        (pinned ? 'true' : 'false') + '">' +
-        '<header class="panel__header">' +
-          '<span class="panel__icon panel__icon--' + art.tone + '">' +
-            icon(art.icon, '') +
-          '</span>' +
-          '<span class="panel__heading">' +
-            '<h2 class="panel__title" title="' + name + '">' + name + '</h2>' +
-            '<span class="panel__sub">' + escapeHtml(sub) + '</span>' +
-          '</span>' +
-          '<button type="button" class="panel__pin" data-act="toggle-pin"' +
-            ' data-value="' + name + '" aria-pressed="' + (pinned ? 'true' : 'false') + '"' +
-            ' title="' + escapeHtml(pinLabel) + '" aria-label="' + escapeHtml(pinLabel) + '">' +
-            icon(pinned ? 'pin-on' : 'pin', '') +
-          '</button>' +
-        '</header>' +
-        '<ul class="panel__body" data-group="' + name + '">' +
-          group.articles.map(function (article) {
-            return renderRow(article, query, {
-              meta: chip(article.source, 'source', 'filter-source')
-            });
-          }).join('') +
-        '</ul>' +
-      '</section>';
+  // Day headers only earn their space when the list is actually in date order;
+  // in score order they would cut the ranking into arbitrary blocks, so the
+  // other two orders get a single group whose gutter names the ordering itself.
+  function feedGroups(articles) {
+    if (state.view === 'saved') {
+      return [{ label: 'Saved', sub: 'Newest first', articles: articles }];
     }
 
-    return '<section class="card panel">' +
-      '<header class="panel__header">' +
-        (group.health ? '<span class="dot dot--' + group.health + '" title="' +
-          escapeHtml(healthLabel(group.health)) + '"></span>' : '') +
-        '<h2 class="panel__title" title="' + name + '">' + name + '</h2>' +
-        (sub ? '<span class="panel__sub">' + escapeHtml(sub) + '</span>' : '') +
-        '<span class="badge badge--sm">' + group.articles.length + '</span>' +
-        '<span class="panel__meter" style="width:' + share + '%"' +
-        ' title="' + share + '% score ' + state.thresholds.high + ' or above"></span>' +
-      '</header>' +
-      '<ul class="panel__body" data-group="' + name + '">' +
-        group.articles.map(function (article) {
+    if (state.sort !== 'recent') {
+      return [{
+        label: state.sort === 'mixed' ? 'Mixed' : 'Top signal',
+        sub: state.sort === 'mixed' ? 'Balanced across sources' : 'Ranked stories',
+        articles: articles
+      }];
+    }
+
+    var groups = [];
+    var current = null;
+    articles.forEach(function (article) {
+      var day = dayBucket(ageOf(article).date);
+      if (!current || current.label !== day) {
+        current = { label: day, sub: '', articles: [] };
+        groups.push(current);
+      }
+      current.articles.push(article);
+    });
+    groups.forEach(function (group) {
+      group.sub = plural(group.articles.length, 'story', 'stories');
+    });
+    return groups;
+  }
+
+  function renderFeed(articles, query, total) {
+    var position = 0;
+
+    var stream = feedGroups(articles).map(function (group) {
+      return '<section class="daygroup">' +
+        '<div class="daygroup__label">' +
+          '<h2 class="daygroup__title">' + escapeHtml(group.label) + '</h2>' +
+          '<p class="daygroup__sub">' + escapeHtml(group.sub) + '</p>' +
+        '</div>' +
+        '<ol class="daygroup__list">' + group.articles.map(function (article) {
+          position++;
           return renderRow(article, query, {
-            meta: showSource ? chip(article.source, 'source', 'filter-source') : null
+            className: 'row--feed',
+            position: position < 10 ? '0' + position : String(position),
+            meta: metaLine([metaSource(article), metaTopic(article),
+                            metaAge(article), metaAlso(article)])
           });
-        }).join('') +
-      '</ul>' +
+        }).join('') + '</ol>' +
+      '</section>';
+    }).join('');
+
+    return stream +
+      '<div class="streamend">' +
+        (articles.length < total
+          ? '<button type="button" class="btn btn--outline btn--sm" data-act="load-more">' +
+            'Load more articles ↓</button>'
+          : '<span></span>') +
+        '<span class="streamend__count">' + articles.length + ' of ' +
+        plural(total, 'article') + '</span>' +
+      '</div>';
+  }
+
+  /* -- Categories --------------------------------------------------------- */
+
+  // Every topic is a section on one page. Four headlines show; the rest wait
+  // behind a link that opens them in place, so nothing scrolls inside anything.
+  function renderTopic(group, query) {
+    var open = state.openTopics[group.name] === true || Boolean(query);
+    var rows = open ? group.articles : group.articles.slice(0, TOPIC_PREVIEW);
+    var name = escapeHtml(group.name);
+    var pinned = isPinned(group.name);
+    var pinLabel = (pinned ? 'Unpin ' : 'Pin ') + group.name;
+
+    var more = '';
+    if (!query && group.articles.length > TOPIC_PREVIEW) {
+      more = '<button type="button" class="more" data-act="expand-topic"' +
+        ' data-value="' + name + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+        (open ? 'Show fewer ↑' : 'Show all ' + group.articles.length + ' articles →') +
+        '</button>';
+    }
+
+    return '<section class="topic" id="topic-' + slug(group.name) + '"' +
+      ' data-name="' + name + '" aria-labelledby="topic-title-' + slug(group.name) + '">' +
+      '<header class="topic__head">' +
+        '<h2 class="topic__title" id="topic-title-' + slug(group.name) + '">' + name + '</h2>' +
+        '<button type="button" class="topic__pin" data-act="toggle-pin"' +
+          ' data-value="' + name + '" aria-pressed="' + (pinned ? 'true' : 'false') + '"' +
+          ' title="' + escapeHtml(pinLabel) + '" aria-label="' + escapeHtml(pinLabel) + '">' +
+          icon(pinned ? 'pin-on' : 'pin', '') +
+        '</button>' +
+        '<span class="topic__count">' + plural(group.articles.length, 'article') + '</span>' +
+      '</header>' +
+      '<ol class="topic__list">' + rows.map(function (article) {
+        return renderRow(article, query, {
+          className: 'row--topic',
+          meta: metaLine([metaSource(article), metaAge(article), metaAlso(article)])
+        });
+      }).join('') + '</ol>' + more +
     '</section>';
   }
 
-  // A source that fetched fine but matched nothing, or errored outright, gets a
-  // card of its own. The old dashboard simply omitted it, so a broken selector
-  // was indistinguishable from a quiet news day.
-  function renderBrokenPanel(row) {
+  function renderCategoryIndex(groups) {
+    var links = groups.map(function (group) {
+      var name = escapeHtml(group.name);
+      var pinned = isPinned(group.name);
+      var pinLabel = (pinned ? 'Unpin ' : 'Pin ') + group.name;
+      return '<span class="catindex__row' + (pinned ? ' catindex__row--pinned' : '') + '">' +
+        '<a class="catindex__link" href="#topic-' + slug(group.name) + '">' +
+          '<span class="catindex__name">' + name + '</span>' +
+          '<span class="catindex__count">' + group.articles.length + '</span>' +
+        '</a>' +
+        '<button type="button" class="catindex__pin" data-act="toggle-pin"' +
+          ' data-value="' + name + '" aria-pressed="' + (pinned ? 'true' : 'false') + '"' +
+          ' title="' + escapeHtml(pinLabel) + '" aria-label="' + escapeHtml(pinLabel) + '">' +
+          icon(pinned ? 'pin-on' : 'pin', '') +
+        '</button>' +
+      '</span>';
+    }).join('');
+
+    el.catIndexNav.innerHTML =
+      '<a class="catindex__link catindex__link--all" href="#top">All categories</a>' + links;
+
+    el.jump.innerHTML = '<option value="top">All categories</option>' +
+      groups.map(function (group) {
+        return '<option value="topic-' + slug(group.name) + '">' +
+          escapeHtml(group.name) + '</option>';
+      }).join('');
+  }
+
+  /* -- Sources ------------------------------------------------------------ */
+
+  // A board, not a stack of scrollers: every publisher is a card of the same
+  // shape, three headlines deep, and the page is the only thing that scrolls.
+  function renderSourceCard(group, query) {
+    var open = state.openSources[group.name] === true || Boolean(query);
+    var rows = open ? group.articles : group.articles.slice(0, SOURCE_PREVIEW);
+    var name = escapeHtml(group.name);
+
+    var foot = query ? '<span class="srccard__all">All matches shown</span>'
+                     : '<span class="srccard__all">All articles shown</span>';
+    if (!query && group.articles.length > SOURCE_PREVIEW) {
+      foot = '<button type="button" class="more" data-act="expand-source"' +
+        ' data-value="' + name + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+        (open ? 'Show fewer ↑' : 'View all ' + group.articles.length + ' articles →') +
+        '</button>';
+    }
+
+    return '<section class="card srccard" id="source-' + slug(group.name) + '"' +
+      ' aria-labelledby="source-title-' + slug(group.name) + '">' +
+      '<header class="srccard__head">' +
+        '<h2 class="srccard__title" id="source-title-' + slug(group.name) + '">' +
+        name + '</h2>' +
+        // Nothing else, while the source is working. A green light on every one
+        // of twenty-five cards says nothing, and the count it used to sit
+        // beside is already in the footer under it -- two lines of chrome above
+        // every title to repeat what the card says twice below. What survives
+        // is the case worth reading: a source in trouble names its trouble.
+        (group.health && group.health !== 'ok'
+          ? '<p class="srccard__kicker" title="' +
+            escapeHtml(healthLabel(group.health)) + '">' +
+            '<span class="dot dot--' + group.health + '"></span>' +
+            '<span>' + (group.health === 'empty' ? 'no match' : 'error') +
+            '</span></p>'
+          : '') +
+      '</header>' +
+      '<ol class="srccard__list">' + rows.map(function (article) {
+        return renderRow(article, query, {
+          className: 'row--source',
+          meta: metaLine([metaTopic(article), metaAge(article)])
+        });
+      }).join('') + '</ol>' +
+      '<footer class="srccard__foot">' + foot + '</footer>' +
+    '</section>';
+  }
+
+  // A source that fetched fine but matched nothing, or errored outright, keeps
+  // its place on the board. The old dashboard simply omitted it, so a broken
+  // selector was indistinguishable from a quiet news day.
+  function renderBrokenCard(row) {
     var detail = row.state === 'empty'
       ? 'The page loaded but no headline matched the selector.'
       : (row.error || 'The fetch failed.');
@@ -729,21 +998,24 @@
       ? 'Last worked ' + relativePast(parseDate(row.last_success)).replace('updated ', '')
       : 'Never returned a headline';
 
-    return '<section class="card panel panel--broken">' +
-      '<header class="panel__header">' +
-        '<span class="dot dot--' + row.state + '"></span>' +
-        '<h2 class="panel__title" title="' + escapeHtml(row.name) + '">' +
-        escapeHtml(row.name) + '</h2>' +
-        '<span class="badge badge--sm badge--red">' +
-        escapeHtml(row.state === 'empty' ? 'no match' : 'error') + '</span>' +
+    return '<section class="card srccard srccard--broken">' +
+      '<header class="srccard__head">' +
+        '<h2 class="srccard__title">' + escapeHtml(row.name) + '</h2>' +
+        '<p class="srccard__kicker">' +
+          '<span class="dot dot--' + row.state + '"></span>' +
+          '<span>' + escapeHtml(row.state === 'empty' ? 'no match' : 'error') +
+          '</span>' +
+        '</p>' +
       '</header>' +
-      '<div class="panel__broken">' +
+      '<div class="srccard__broken">' +
         '<p>' + escapeHtml(detail) + '</p>' +
-        '<p class="panel__since">' + escapeHtml(since) +
+        '<p class="srccard__since">' + escapeHtml(since) +
         (row.http_status ? ' · HTTP ' + row.http_status : '') + '</p>' +
-        '<button type="button" class="btn btn--outline btn--sm" data-act="manage-source"' +
-        ' data-value="' + escapeHtml(row.name) + '">Fix this source</button>' +
       '</div>' +
+      '<footer class="srccard__foot">' +
+        '<button type="button" class="more" data-act="manage-source"' +
+        ' data-value="' + escapeHtml(row.name) + '">Fix this source →</button>' +
+      '</footer>' +
     '</section>';
   }
 
@@ -756,36 +1028,47 @@
 
   function renderSkeleton() {
     var rows = '';
-    for (var r = 0; r < 5; r++) {
+    for (var r = 0; r < 4; r++) {
       rows += '<div class="skeleton-row">' +
-        '<span class="skeleton" style="width:2.5rem;height:1.25rem;border-radius:9999px"></span>' +
-        '<span class="skeleton" style="flex:1;height:0.75rem"></span>' +
+        '<span class="skeleton" style="width:70%;height:1rem"></span>' +
+        '<span class="skeleton" style="width:30%;height:0.625rem"></span>' +
       '</div>';
     }
 
-    if (state.view === 'feed' || state.view === 'saved') {
-      var feed = '';
-      for (var f = 0; f < 12; f++) feed += rows;
-      el.grid.innerHTML = '<div class="card feed">' + feed + '</div>';
+    if (state.view === 'sources') {
+      var cards = '';
+      for (var c = 0; c < 8; c++) {
+        cards += '<section class="card srccard">' +
+          '<header class="srccard__head">' +
+            '<p class="srccard__kicker"><span class="skeleton" style="width:4rem;height:0.625rem"></span></p>' +
+            '<span class="skeleton" style="width:60%;height:1.25rem"></span>' +
+          '</header>' +
+          '<div class="srccard__list">' + rows + '</div>' +
+        '</section>';
+      }
+      el.grid.innerHTML = cards;
       return;
     }
 
-    var panels = '';
-    for (var p = 0; p < 6; p++) {
-      panels += '<section class="card panel' +
-        (state.view === 'categories' ? ' panel--category' : '') + '">' +
-        '<header class="panel__header">' +
-          (state.view === 'categories'
-            ? '<span class="panel__icon"><span class="skeleton" style="width:100%;height:100%"></span></span>' +
-              '<span class="panel__heading"><span class="skeleton" style="width:7rem;height:0.875rem"></span>' +
-              '<span class="skeleton" style="width:3.25rem;height:0.625rem"></span></span>'
-            : '<span class="skeleton" style="width:40%;height:0.875rem"></span>') +
-        '</header>' +
-        '<div class="panel__body">' + rows + '</div>' +
-      '</section>';
+    if (state.view === 'categories') {
+      var topics = '';
+      for (var t = 0; t < 4; t++) {
+        topics += '<section class="topic">' +
+          '<header class="topic__head">' +
+            '<span class="skeleton" style="width:12rem;height:2rem"></span>' +
+          '</header>' +
+          '<div class="topic__list">' + rows + '</div>' +
+        '</section>';
+      }
+      el.grid.innerHTML = topics;
+      return;
     }
 
-    el.grid.innerHTML = panels;
+    var feed = '';
+    for (var f = 0; f < 4; f++) feed += rows;
+    el.grid.innerHTML = '<section class="daygroup">' +
+      '<div class="daygroup__label"><span class="skeleton" style="width:4rem;height:0.75rem"></span></div>' +
+      '<div class="daygroup__list">' + feed + '</div></section>';
   }
 
   function renderState(iconName, title, body, bodyClass, action) {
@@ -798,38 +1081,15 @@
     '</div>';
   }
 
-  function captureScroll() {
-    var offsets = {};
-    Array.prototype.forEach.call(el.grid.querySelectorAll('.panel__body'), function (body) {
-      if (body.scrollTop > 0) offsets[body.dataset.group] = body.scrollTop;
-    });
-    return offsets;
-  }
-
-  function restoreScroll(offsets) {
-    Array.prototype.forEach.call(el.grid.querySelectorAll('.panel__body'), function (body) {
-      var offset = offsets[body.dataset.group];
-      if (offset) body.scrollTop = offset;
-      markOverflow(body);
-    });
-  }
-
-  // Flags the panel while there is still list left to scroll, which drives the
-  // bottom fade in app.css.
-  function markOverflow(body) {
-    var remaining = body.scrollHeight - body.scrollTop - body.clientHeight;
-    body.parentNode.dataset.more = remaining > 4 ? 'true' : 'false';
-  }
-
   function renderFreshness() {
     el.lastUpdated.textContent = relativePast(state.lastSync);
     el.nextSync.textContent = state.nextSync
       ? 'next sync ' + relativeFuture(state.nextSync)
-      : 'no schedule';
+      : (state.stats && state.stats.refresh_mode === 'check' ? 'checks scheduled every 30 min' : 'no schedule');
 
     var dot = 'live';
     if (state.job && state.job.state === 'running') dot = 'syncing';
-    else if (state.pollFailures > 0) dot = 'offline';
+    else if (state.pollFailures > 0 || (state.stats && state.stats.storage_error)) dot = 'offline';
     else if (state.lastSync && Date.now() - state.lastSync.getTime() > 3600000) dot = 'stale';
     el.statusDot.dataset.state = dot;
   }
@@ -841,10 +1101,13 @@
     if (state.pollFailures >= 1) {
       message = 'Cannot reach the server — showing the last data we loaded. Retrying…';
       action = { label: 'Retry now', handler: function () { load({ silent: true }); } };
+    } else if (state.stats && state.stats.storage_error) {
+      message = state.stats.storage_error;
+      action = { label: 'Retry now', handler: refresh };
     } else if (state.status === 'ready' && state.lastSync &&
                Date.now() - state.lastSync.getTime() > 3600000) {
       message = 'These headlines are over an hour old. The scheduled scrape may not be running.';
-      action = { label: 'Re-scrape', handler: refresh };
+      action = { label: state.stats && state.stats.refresh_mode === 'check' ? 'Check updates' : 'Re-scrape', handler: refresh };
     } else if (state.health && state.health.failing >= 3) {
       message = plural(state.health.failing, 'source') + ' stopped returning headlines, ' +
                 'so parts of the feed are missing.';
@@ -855,7 +1118,7 @@
     if (!message) return;
 
     el.bannerText.textContent = message;
-    el.banner.dataset.tone = state.pollFailures ? 'error' : 'warn';
+    el.banner.dataset.tone = state.pollFailures || (state.stats && state.stats.storage_error) ? 'error' : 'warn';
     el.bannerAction.hidden = !action;
     if (action) {
       el.bannerAction.textContent = action.label;
@@ -864,127 +1127,192 @@
   }
 
   function renderFilters() {
-    var pills = activeFilters();
+    var pills = pillFilters();
     el.filters.hidden = pills.length === 0;
     el.filters.innerHTML = pills.map(function (pill) {
       return '<button type="button" class="filter" data-act="drop-filter"' +
         ' data-value="' + pill.kind + '" title="Remove this filter">' +
         escapeHtml(pill.label) + icon('x', 'filter__x') + '</button>';
-    }).join('') + (pills.length > 1
+    }).join('') + (pills.length
       ? '<button type="button" class="filter filter--clear" data-act="drop-filter"' +
         ' data-value="all">Clear all</button>'
       : '');
   }
 
-  function renderCount(articles) {
+  // The head is the same component in all four views, and in three of them it
+  // is one line of count. The title it used to carry is now the hidden h1: the
+  // nav above has already said which view this is.
+  function renderHead(articles, total) {
+    var copy = VIEW_COPY[state.view] || VIEW_COPY.feed;
+
+    el.viewHead.dataset.view = state.view;
+    document.title = copy.title + ' · High Signal';
+    el.viewTitle.textContent = copy.title;
+    el.sortSwitch.hidden = state.view !== 'feed';
+    if (el.search.placeholder !== copy.search) el.search.placeholder = copy.search;
+
     if (state.status !== 'ready') {
       el.resultCount.textContent = '';
-      el.clearBtn.hidden = true;
       return;
     }
 
-    var total = corpus().filter(function (a) {
-      return state.view === 'saved' || !isHidden(a.id);
-    }).length;
-    var shown = articles.length;
-    var scope = state.view === 'categories'
-      ? plural(distinct(articles, categoryOf), 'topic')
-      : plural(distinct(articles, function (a) { return a.source; }), 'source');
+    if (!articles.length) {
+      // "0 articles in 0 categories" is arithmetic, not information. The empty
+      // state below says what is missing and what to do about it.
+      el.resultCount.textContent = '';
+      return;
+    }
 
-    el.resultCount.innerHTML = isFiltered()
-      ? '<b>' + shown + '</b> of ' + total + ' headlines across <b>' + scope + '</b>'
-      : '<b>' + total + '</b> headlines across <b>' + scope + '</b>';
+    var scope = state.view === 'sources'
+      ? plural(distinct(articles, function (a) { return a.source; }), 'source')
+      : plural(distinct(articles, categoryOf), 'category', 'categories');
 
-    el.clearBtn.hidden = !isFiltered();
+    el.resultCount.textContent = state.view === 'sources'
+      ? scope + ' · ' + plural(articles.length, 'article')
+      : plural(articles.length, 'article') +
+        (isFiltered() ? ' of ' + total : '') + ' · ' + scope;
+  }
+
+  // The category index is a column beside the page on wide screens and a select
+  // above it on narrow ones. Both are built from the same list in the same
+  // order, so the two never disagree about where a topic sits.
+  //
+  // The flag drives the layout rather than the view name, because a category
+  // view with nothing to index -- loading, or a search that matched nothing --
+  // still owes its one column the full width.
+  function renderReading(groups) {
+    var showIndex = state.view === 'categories' && state.status === 'ready' &&
+                    Boolean(groups && groups.length);
+    el.reading.dataset.index = showIndex ? 'on' : 'off';
+    el.catIndex.hidden = !showIndex;
+    el.jumpBar.hidden = !showIndex;
+    if (showIndex) renderCategoryIndex(groups);
   }
 
   function render() {
     el.grid.dataset.view = state.view;
-    el.sortSwitch.hidden = state.view !== 'feed';
-    el.unreadBtn.setAttribute('aria-pressed', state.unreadOnly ? 'true' : 'false');
+    el.unreadBtn.setAttribute('aria-checked', state.unreadOnly ? 'true' : 'false');
 
     renderFilters();
     renderBanner();
 
     if (state.status === 'loading') {
+      renderHead([], 0);
+      renderReading(null);
       renderSkeleton();
-      renderCount([]);
       return;
     }
 
     if (state.status === 'error') {
+      renderHead([], 0);
+      renderReading(null);
       renderState('alert', 'Could not reach the server',
-        'The dashboard could not load /api/feed. Check that the Flask app is still running.',
+        'The dashboard could not load its published snapshot. Check the server and try again.',
         'state__body--error', { act: 'retry', label: 'Try again' });
-      renderCount([]);
       return;
     }
 
     var articles = visibleArticles();
     var query = state.query.trim();
-    var offsets = captureScroll();
+    var total = corpus().filter(function (a) {
+      return state.view === 'saved' || !isHidden(a.id);
+    }).length;
     var scrollY = window.scrollY;
 
     renderFreshness();
-    renderCount(articles);
+    renderHead(articles, total);
 
     if (!articles.length) {
+      renderReading(null);
       renderEmpty();
       return;
     }
 
     if (state.view === 'feed' || state.view === 'saved') {
-      el.grid.innerHTML = renderFeed(articles, query);
+      renderReading(null);
+      el.grid.innerHTML = renderFeed(articles.slice(0, state.limit), query, articles.length);
       window.scrollTo(0, scrollY);
       return;
     }
 
-    var showSource = state.view === 'categories';
-    var groups = groupBy(articles, showSource ? categoryOf : function (a) { return a.source; });
+    if (state.view === 'categories') {
+      var topics = groupBy(articles, categoryOf);
 
-    if (showSource) {
-      groups.sort(function (a, b) {
+      // The taxonomy has an editorial order of its own; pinning promotes a
+      // topic within it rather than reshuffling everything around it.
+      topics.sort(function (a, b) {
         var ai = CATEGORY_ORDER.indexOf(a.name);
         var bi = CATEGORY_ORDER.indexOf(b.name);
         return (ai < 0 ? CATEGORY_ORDER.length : ai) -
                (bi < 0 ? CATEGORY_ORDER.length : bi) || a.name.localeCompare(b.name);
       });
-
-      // Pinned topics lead the grid; the editorial order above still decides
-      // the run within each half, so pinning moves a card without reshuffling
-      // everything around it.
       var lead = [];
       var rest = [];
-      groups.forEach(function (group) {
+      topics.forEach(function (group) {
         (isPinned(group.name) ? lead : rest).push(group);
       });
-      groups = lead.concat(rest);
+      topics = lead.concat(rest);
+
+      renderReading(topics);
+      el.grid.innerHTML = topics.map(function (group) {
+        return renderTopic(group, query);
+      }).join('');
+      window.scrollTo(0, scrollY);
+      updateActiveTopic();
+      return;
     }
 
-    if (!showSource && state.health) {
-      // Attach each panel's health so a working source and a stale one do not
-      // look identical.
+    // Sources: alphabetical, because a board is scanned by name, not by size.
+    var sources = groupBy(articles, function (a) { return a.source; });
+    sources.sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+    if (state.health) {
       var byName = {};
       state.health.sources.forEach(function (row) { byName[row.name] = row; });
-      groups.forEach(function (group) {
+      sources.forEach(function (group) {
         var row = byName[group.name];
         group.health = row ? row.state : null;
       });
     }
 
-    var broken = '';
-    if (!showSource && state.health && !isFiltered()) {
-      broken = state.health.sources.filter(function (row) {
+    var board = sources.map(function (group) {
+      return renderSourceCard(group, query);
+    }).join('');
+
+    if (state.health && !isFiltered()) {
+      board += state.health.sources.filter(function (row) {
         return row.state === 'error' || row.state === 'empty';
-      }).map(renderBrokenPanel).join('');
+      }).map(renderBrokenCard).join('');
     }
 
-    el.grid.innerHTML = groups.map(function (group) {
-      return renderPanel(group, query, showSource);
-    }).join('') + broken;
-
-    restoreScroll(offsets);
+    renderReading(null);
+    el.grid.innerHTML = board;
     window.scrollTo(0, scrollY);
+  }
+
+  // Which topic section the reader is actually inside. The index follows the
+  // page rather than the last thing clicked, so scrolling away from a topic
+  // moves the marker with it.
+  function updateActiveTopic() {
+    if (state.view !== 'categories') return;
+    var sections = el.grid.querySelectorAll('.topic[id]');
+    if (!sections.length) return;
+
+    var offset = document.querySelector('.appbar').getBoundingClientRect().bottom + 72;
+    var current = sections[0];
+    Array.prototype.forEach.call(sections, function (section) {
+      if (section.getBoundingClientRect().top <= offset) current = section;
+    });
+
+    Array.prototype.forEach.call(el.catIndexNav.querySelectorAll('.catindex__link'),
+      function (link) {
+        if (link.getAttribute('href') === '#' + current.id) {
+          link.setAttribute('aria-current', 'location');
+        } else {
+          link.removeAttribute('aria-current');
+        }
+      });
+    el.jump.value = current.id;
   }
 
   function renderEmpty() {
@@ -1085,12 +1413,24 @@
   /* == Data ================================================================ */
 
   function fetchJson(url, options) {
-    return fetch(url, options).then(function (response) {
+    options = options || {};
+    var admin = options.admin;
+    var requestOptions = {};
+    Object.keys(options).forEach(function (key) {
+      if (key !== 'admin') requestOptions[key] = options[key];
+    });
+    requestOptions.headers = Object.assign({}, options.headers || {});
+    if (admin) {
+      if (!state.adminToken) return Promise.reject(new Error('Enter the owner token first.'));
+      requestOptions.headers.Authorization = 'Bearer ' + state.adminToken;
+    }
+    return fetch(url, requestOptions).then(function (response) {
       if (!response.ok) {
         return response.json().catch(function () { return {}; })
           .then(function (body) {
             var error = new Error(body.error || (url + ' ' + response.status));
             error.status = response.status;
+            error.body = body;
             throw error;
           });
       }
@@ -1098,12 +1438,143 @@
     });
   }
 
+  var DASHBOARD_DB = 'high-signal-dashboard';
+  var DASHBOARD_STORE = 'snapshots';
+
+  function openDashboardDb() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error('IndexedDB unavailable')); return; }
+      var request = indexedDB.open(DASHBOARD_DB, 1);
+      request.onupgradeneeded = function () {
+        if (!request.result.objectStoreNames.contains(DASHBOARD_STORE)) {
+          request.result.createObjectStore(DASHBOARD_STORE);
+        }
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error || new Error('IndexedDB failed')); };
+    });
+  }
+
+  function readDashboardSlot(key) {
+    return openDashboardDb().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var request = db.transaction(DASHBOARD_STORE, 'readonly')
+          .objectStore(DASHBOARD_STORE).get(key);
+        request.onsuccess = function () { db.close(); resolve(request.result || null); };
+        request.onerror = function () { db.close(); reject(request.error); };
+      });
+    });
+  }
+
+  function validDashboard(payload) {
+    return Boolean(payload && typeof payload === 'object' &&
+      typeof payload.publication_id === 'string' && payload.publication_id &&
+      Array.isArray(payload.articles) && payload.stats && payload.sources &&
+      parseDate(payload.generated_at));
+  }
+
+  function lastDashboardSnapshot() {
+    return readDashboardSlot('current').then(function (payload) {
+      if (validDashboard(payload)) return payload;
+      return readDashboardSlot('previous').then(function (previous) {
+        return validDashboard(previous) ? previous : null;
+      });
+    }).catch(function () { return null; });
+  }
+
+  function saveDashboardSnapshot(payload) {
+    if (!validDashboard(payload)) return Promise.resolve();
+    return readDashboardSlot('current').catch(function () { return null; })
+      .then(function (current) {
+        return openDashboardDb().then(function (db) {
+          return new Promise(function (resolve, reject) {
+            var transaction = db.transaction(DASHBOARD_STORE, 'readwrite');
+            var snapshots = transaction.objectStore(DASHBOARD_STORE);
+            if (validDashboard(current) &&
+                current.publication_id !== payload.publication_id) {
+              snapshots.put(current, 'previous');
+            }
+            snapshots.put(payload, 'current');
+            transaction.oncomplete = function () { db.close(); resolve(); };
+            transaction.onerror = function () { db.close(); reject(transaction.error); };
+            transaction.onabort = transaction.onerror;
+          });
+        });
+      });
+  }
+
+  function articleSortTime(article) {
+    return (parseDate(article.published) || parseDate(article.first_seen) ||
+            parseDate(article.timestamp) || new Date(0)).getTime();
+  }
+
+  function sortedDashboardArticles(input, sort) {
+    var articles = input.slice();
+    if (sort === 'recent') {
+      return articles.sort(function (a, b) {
+        return articleSortTime(b) - articleSortTime(a) || scoreOf(b) - scoreOf(a);
+      });
+    }
+    if (sort === 'mixed') {
+      var buckets = {};
+      articles.sort(function (a, b) { return scoreOf(b) - scoreOf(a); })
+        .forEach(function (article) {
+          (buckets[article.source] = buckets[article.source] || []).push(article);
+        });
+      var names = Object.keys(buckets).sort(function (a, b) {
+        return scoreOf(buckets[b][0]) - scoreOf(buckets[a][0]) || a.localeCompare(b);
+      });
+      var mixed = [];
+      var largest = names.reduce(function (size, name) {
+        return Math.max(size, buckets[name].length);
+      }, 0);
+      for (var index = 0; index < largest; index++) {
+        names.forEach(function (name) {
+          if (buckets[name][index]) mixed.push(buckets[name][index]);
+        });
+      }
+      return mixed;
+    }
+    return articles.sort(function (a, b) {
+      return scoreOf(b) - scoreOf(a) || a.source.localeCompare(b.source);
+    });
+  }
+
   var summaryRequests = {};
+  var browserSummaries = readJson('hs.summaries', {});
+  if (!browserSummaries || typeof browserSummaries !== 'object' || Array.isArray(browserSummaries)) {
+    browserSummaries = {};
+  }
+
+  Object.keys(browserSummaries).forEach(function (id) {
+    var entry = browserSummaries[id];
+    if (!entry || typeof entry.summary !== 'string' ||
+        typeof entry.checked_at !== 'number') delete browserSummaries[id];
+  });
+
+  function restoreSummary(article) {
+    var cached = browserSummaries[article.id];
+    if (!article.summary && cached && typeof cached.summary === 'string' &&
+        Date.now() - cached.checked_at < 6 * 3600000) {
+      article.summary = cached.summary;
+      article.summary_source = cached.summary_source || '';
+    }
+  }
 
   function applySummary(article, result) {
     article.summary = result.summary || '';
     article.summary_source = result.summary_source || '';
     article.summary_error = result.summary_error || '';
+    browserSummaries[article.id] = {
+      summary: article.summary,
+      summary_source: article.summary_source,
+      checked_at: Date.now()
+    };
+    var keys = Object.keys(browserSummaries).sort(function (a, b) {
+      return browserSummaries[b].checked_at - browserSummaries[a].checked_at;
+    });
+    keys.slice(500).forEach(function (key) { delete browserSummaries[key]; });
+    writeJson('hs.summaries', browserSummaries);
 
     if (savedIndex[article.id]) {
       savedIndex[article.id].summary = article.summary;
@@ -1160,6 +1631,12 @@
     state.lastSync = parseDate(stats && stats.last_update) || state.lastSync;
     state.nextSync = parseDate(stats && stats.next_update);
     if (stats && stats.refresh) followJob(stats.refresh);
+    var checkMode = stats && stats.refresh_mode === 'check';
+    el.refreshBtn.title = checkMode
+      ? 'Check the latest saved feed. Sources are checked on a 30-minute schedule.'
+      : 'Re-scrape sources';
+    el.refreshBtn.setAttribute('aria-label', checkMode ? 'Check for updates' : 'Re-scrape sources');
+    el.refreshFromDialog.textContent = checkMode ? 'Check for updates' : 'Re-scrape now';
   }
 
   function applyHealth(health) {
@@ -1179,15 +1656,40 @@
       render();
     }
 
-    return Promise.all([
-      fetchJson('/api/feed?sort=' + encodeURIComponent(state.sort)),
-      fetchJson('/api/stats').catch(function () { return null; }),
-      fetchJson('/api/sources').catch(function () { return null; })
-    ]).then(function (results) {
-      var articles = results[0] || [];
-      applyStats(results[1]);
-      applyHealth(results[2]);
+    return fetchJson('/api/dashboard').then(function (dashboard) {
+      if (!validDashboard(dashboard)) throw new Error('The dashboard response is invalid.');
+      saveDashboardSnapshot(dashboard).catch(function () {});
+      state.offlineSnapshot = false;
+      return applyDashboard(dashboard, silent);
+    }).catch(function (error) {
+      if (silent || state.articles.length) throw error;
+      return lastDashboardSnapshot().then(function (dashboard) {
+        if (!dashboard) throw error;
+        state.pollFailures++;
+        state.offlineSnapshot = true;
+        applyDashboard(dashboard, false);
+      });
+    }).catch(function (error) {
+      console.error(error);
+      state.pollFailures++;
+      if (silent) {
+        renderFreshness();
+        renderBanner();
+      } else {
+        state.status = 'error';
+        render();
+      }
+      throw error;
+    });
+  }
+
+  function applyDashboard(dashboard, silent) {
+      var articles = sortedDashboardArticles(dashboard.articles || [], state.sort);
+      articles.forEach(restoreSummary);
+      applyStats(dashboard.stats);
+      applyHealth(dashboard.sources);
       state.pollFailures = 0;
+      if (state.offlineSnapshot) state.pollFailures = 1;
       state.status = 'ready';
 
       // A silent poll must not swap the list out from under the reader. New
@@ -1205,7 +1707,7 @@
           showNewPill();
           renderFreshness();
           renderBanner();
-          return;
+          return dashboard;
         }
       }
 
@@ -1214,18 +1716,7 @@
       state.pendingCount = 0;
       hideNewPill();
       render();
-    }).catch(function (error) {
-      console.error(error);
-      state.pollFailures++;
-      if (silent) {
-        renderFreshness();
-        renderBanner();
-      } else {
-        state.status = 'error';
-        render();
-      }
-      throw error;
-    });
+      return dashboard;
   }
 
   function showNewPill() {
@@ -1255,6 +1746,12 @@
     el.refreshBtn.disabled = true;
     fetchJson('/api/refresh', { method: 'POST' })
       .then(function (result) {
+        if (result.status === 'checked') {
+          return load({ silent: true }).then(function () {
+            applyPending();
+            toast('success', result.message);
+          }).finally(function () { el.refreshBtn.disabled = false; });
+        }
         followJob(result.job);
 
         // Deployed serverlessly the scrape runs inside the request and comes
@@ -1279,14 +1776,14 @@
           ? 'A scrape is already running'
           : 'Scraping ' + (state.health ? state.health.total : 'all') + ' sources…');
       })
-      .catch(function () {
+      .catch(function (error) {
         el.refreshBtn.disabled = false;
         // A refresh that cannot even reach the server is the same connectivity
         // problem the status dot reports, so say so there too.
         state.pollFailures++;
         renderFreshness();
         renderBanner();
-        toast('error', 'Could not start a scrape.');
+        toast('error', error.message || 'Could not refresh the feed.');
       });
   }
 
@@ -1360,9 +1857,59 @@
 
   /* == Sources dialog ====================================================== */
 
+  function hostedSourceMode() {
+    return Boolean(state.stats && state.stats.refresh_mode === 'check');
+  }
+
+  function canManageSources() {
+    return !hostedSourceMode() || Boolean(state.adminToken);
+  }
+
+  function mergeAuthoritativeSources(configs) {
+    var previous = {};
+    (state.health && state.health.sources || []).forEach(function (row) {
+      previous[row.name] = row;
+    });
+    state.adminSources = {};
+    var rows = configs.map(function (config) {
+      state.adminSources[config.name] = config;
+      return Object.assign({
+        state: config.enabled === false ? 'disabled' : 'pending',
+        count: 0, articles: 0, error: null, last_success: null
+      }, previous[config.name] || {}, config);
+    });
+    var states = {};
+    rows.forEach(function (row) {
+      states[row.state] = (states[row.state] || 0) + 1;
+    });
+    applyHealth({
+      sources: rows, total: rows.length, ok: states.ok || 0,
+      failing: (states.error || 0) + (states.empty || 0),
+      disabled: states.disabled || 0, states: states
+    });
+  }
+
+  function loadAdminSources() {
+    if (!state.adminToken || !hostedSourceMode()) return Promise.resolve();
+    el.adminStatus.textContent = 'Checking owner access…';
+    return fetchJson('/api/admin/sources', { admin: true }).then(function (result) {
+      mergeAuthoritativeSources(result.sources || []);
+      el.adminStatus.textContent = 'Owner access active for this tab. The token is not stored.';
+      renderSourceList();
+      resumeStoredSourceToolJob();
+    }).catch(function (error) {
+      state.adminSources = {};
+      el.adminStatus.textContent = error.status === 401
+        ? 'That owner token was not accepted.' : (error.message || 'Owner access failed.');
+      renderSourceList();
+      throw error;
+    });
+  }
+
   function openSources(focusName) {
     if (!el.sourcesDialog.open) el.sourcesDialog.showModal();
     renderSourceList(focusName);
+    if (state.adminToken && hostedSourceMode()) loadAdminSources().catch(function () {});
     if (!el.categorySelect.options.length) {
       el.categorySelect.innerHTML = KNOWN_CATEGORIES.map(function (name) {
         return '<option value="' + escapeHtml(name) + '">' + escapeHtml(name) + '</option>';
@@ -1382,6 +1929,8 @@
       return;
     }
 
+    var canManage = canManageSources();
+    el.addSource.classList.toggle('addsource--locked', !canManage);
     el.sourceList.innerHTML = state.health.sources.map(function (row) {
       var name = escapeHtml(row.name);
       var last = row.last_success
@@ -1406,11 +1955,14 @@
         '</div>' +
         '<div class="srow__actions">' +
           '<button type="button" class="btn btn--ghost btn--sm btn--icon" data-src-act="test"' +
+          (canManage ? '' : ' disabled') +
           ' title="Test now" aria-label="Test ' + name + '">' + icon('play', '') + '</button>' +
           '<button type="button" class="btn btn--ghost btn--sm" data-src-act="toggle"' +
+          (canManage ? '' : ' disabled') +
           ' aria-pressed="' + (row.enabled ? 'true' : 'false') + '">' +
           (row.enabled ? 'On' : 'Off') + '</button>' +
           '<button type="button" class="btn btn--ghost btn--sm btn--icon" data-src-act="delete"' +
+          (canManage ? '' : ' disabled') +
           ' title="Remove source" aria-label="Remove ' + name + '">' + icon('trash', '') +
           '</button>' +
         '</div>' +
@@ -1530,6 +2082,7 @@
   }
 
   function sourceConfig(name) {
+    if (state.adminSources[name]) return state.adminSources[name];
     var row = state.health && state.health.sources.filter(function (item) {
       return item.name === name;
     })[0];
@@ -1537,6 +2090,9 @@
   }
 
   function discoverSource(payload, button) {
+    if (hostedSourceMode()) {
+      return submitSourceToolJob('discover', payload, el.sourceDiscovery, button, renderDiscovery);
+    }
     button.disabled = true;
     el.sourceDiscovery.hidden = false;
     el.sourceDiscovery.innerHTML = '<p class="preview__pending">Finding options…</p>';
@@ -1555,6 +2111,11 @@
   }
 
   function testSource(payload, target, button) {
+    if (hostedSourceMode()) {
+      return submitSourceToolJob('test', payload, target, button, function (result) {
+        renderPreview(target, result);
+      });
+    }
     button.disabled = true;
     target.hidden = false;
     target.innerHTML = '<p class="preview__pending">Fetching…</p>';
@@ -1571,6 +2132,131 @@
       button.disabled = false;
     });
   }
+
+  function submitSourceToolJob(kind, payload, target, button, onComplete) {
+    if (!state.adminToken) {
+      toast('error', 'Enter the owner token first.');
+      return Promise.reject(new Error('Owner token required'));
+    }
+    button.disabled = true;
+    target.hidden = false;
+    target.innerHTML = '<p class="preview__pending">Queueing with GitHub Actions…</p>';
+    return fetchJson('/api/admin/jobs', {
+      admin: true, method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: kind, payload: payload })
+    }).then(function (job) {
+      var sourceName = target.classList.contains('srow__result') ? payload.name : '';
+      state.sourceToolJob = { id: job.id, kind: kind, target: target,
+        button: button, onComplete: onComplete, delay: 1500, sourceName: sourceName };
+      writeJson('hs.sourceToolJob', { id: job.id, kind: kind, sourceName: sourceName });
+      renderSourceToolPending(target, job);
+      scheduleSourceToolPoll();
+      return job;
+    }).catch(function (error) {
+      var failedId = error.body && error.body.id;
+      target.innerHTML = '<p class="preview__fail">' + icon('alert', '') +
+        escapeHtml(error.message) + '</p>' + (failedId
+          ? '<button type="button" class="btn btn--outline btn--sm" data-job-retry="' +
+            escapeHtml(failedId) + '" data-job-kind="' + escapeHtml(kind) + '">Retry job</button>'
+          : '');
+      return null;
+    }).finally(function () {
+      if (!state.sourceToolJob || state.sourceToolJob.button !== button) button.disabled = false;
+    });
+  }
+
+  function renderSourceToolPending(target, job) {
+    target.hidden = false;
+    target.innerHTML = '<p class="preview__pending">' +
+      (job.state === 'running' ? 'Testing source…' :
+       'Queued. GitHub Actions may take a few minutes to start…') + '</p>';
+  }
+
+  function scheduleSourceToolPoll() {
+    if (!state.sourceToolJob || state.sourceToolTimer || document.hidden) return;
+    state.sourceToolTimer = setTimeout(pollSourceToolJob, state.sourceToolJob.delay || 1500);
+  }
+
+  function pollSourceToolJob() {
+    state.sourceToolTimer = null;
+    var active = state.sourceToolJob;
+    if (!active || document.hidden || !state.adminToken) return;
+    fetchJson('/api/admin/jobs/' + encodeURIComponent(active.id), { admin: true })
+      .then(function (job) {
+        if (!state.sourceToolJob || state.sourceToolJob.id !== job.id) return;
+        if (job.state === 'queued' || job.state === 'running') {
+          renderSourceToolPending(active.target, job);
+          active.delay = Math.min((active.delay || 1500) * 1.7, 10000);
+          scheduleSourceToolPoll();
+          return;
+        }
+        if (active.button) active.button.disabled = false;
+        if (job.state === 'completed' && job.result) {
+          active.onComplete(job.result);
+          writeJson('hs.sourceToolJob', { id: job.id, kind: active.kind,
+            completed: true });
+        } else {
+          active.target.innerHTML = '<p class="preview__fail">' + icon('alert', '') +
+            escapeHtml(job.error || 'Source tool failed') + '</p>' +
+            '<button type="button" class="btn btn--outline btn--sm" data-job-retry="' +
+            escapeHtml(job.id) + '" data-job-kind="' + escapeHtml(active.kind) + '">Retry job</button>';
+          writeJson('hs.sourceToolJob', { id: job.id, kind: active.kind,
+            failed: true });
+        }
+        state.sourceToolJob = null;
+      }).catch(function (error) {
+        active.target.innerHTML = '<p class="preview__fail">' + icon('alert', '') +
+          escapeHtml(error.message) + '</p>';
+        active.delay = Math.min((active.delay || 1500) * 2, 10000);
+        scheduleSourceToolPoll();
+      });
+  }
+
+  function resumeStoredSourceToolJob() {
+    if (state.sourceToolJob || !state.adminToken) return;
+    var saved = readJson('hs.sourceToolJob', null);
+    if (!saved || !saved.id || saved.completed || saved.failed) return;
+    var row = saved.sourceName && el.sourceList.querySelector(
+      '.srow[data-name="' + cssEscape(saved.sourceName) + '"]');
+    var target = saved.kind === 'discover' ? el.sourceDiscovery
+      : (row ? row.querySelector('.srow__result') : el.testPreview);
+    state.sourceToolJob = {
+      id: saved.id, kind: saved.kind, target: target,
+      button: saved.kind === 'discover' ? el.discoverSourceBtn
+        : (row ? row.querySelector('[data-src-act="test"]') : el.testSourceBtn),
+      onComplete: saved.kind === 'discover' ? renderDiscovery : function (result) {
+        renderPreview(target, result);
+      }, delay: 500, sourceName: saved.sourceName || ''
+    };
+    renderSourceToolPending(target, { state: 'queued' });
+    scheduleSourceToolPoll();
+  }
+
+  el.sourcesDialog.addEventListener('click', function (event) {
+    var retry = event.target.closest('[data-job-retry]');
+    if (!retry) return;
+    var target = retry.closest('.discovery, .preview, .srow__result') || el.testPreview;
+    var retryRow = retry.closest('.srow');
+    var sourceName = retryRow ? retryRow.dataset.name : '';
+    retry.disabled = true;
+    fetchJson('/api/admin/jobs/' + encodeURIComponent(retry.dataset.jobRetry) + '/retry', {
+      admin: true, method: 'POST'
+    }).then(function (job) {
+      state.sourceToolJob = {
+        id: job.id, kind: retry.dataset.jobKind, target: target, button: null,
+        onComplete: retry.dataset.jobKind === 'discover' ? renderDiscovery : function (result) {
+          renderPreview(target, result);
+        }, delay: 1500, sourceName: sourceName
+      };
+      writeJson('hs.sourceToolJob', { id: job.id, kind: retry.dataset.jobKind,
+        sourceName: sourceName });
+      renderSourceToolPending(target, job);
+      scheduleSourceToolPoll();
+    }).catch(function (error) {
+      toast('error', error.message);
+      retry.disabled = false;
+    });
+  });
 
   /* == Toasts ============================================================== */
 
@@ -1683,8 +2369,16 @@
     });
   }
 
+  // Anything that changes which headlines qualify puts the feed back on its
+  // first page: a reader who has just narrowed the list did not ask to stay
+  // eight pages deep in the one they narrowed away.
+  function resetPaging() {
+    state.limit = FEED_PAGE;
+  }
+
   function selectScore(score, options) {
     state.minScore = score;
+    resetPaging();
     writePref('hs.minScore', String(score));
     checkRadios(el.scoreSwitch, 'score', score);
     syncUrl();
@@ -1695,28 +2389,33 @@
     if (VIEWS.indexOf(view) === -1) view = 'feed';
     state.view = view;
     state.expandedId = null;
+    resetPaging();
     writePref('hs.view', view);
     checkRadios(el.viewSwitch, 'view', view);
     syncUrl();
     if (!options || !options.quiet) render();
   }
 
-  // The server owns feed order, so a change here needs fresh data. The current
-  // list stays on screen while it arrives.
+  // The bundled snapshot contains the whole corpus, so sorting is immediate
+  // and never creates another Worker request.
   function selectSort(sort, options) {
     if (SORTS.indexOf(sort) === -1) sort = 'score';
     state.sort = sort;
+    resetPaging();
     writePref('hs.sort', sort);
     checkRadios(el.sortSwitch, 'sort', sort);
     syncUrl();
     if (options && options.reload) {
-      load({ silent: true }).then(applyPending).catch(function () {});
+      state.articles = sortedDashboardArticles(state.articles, sort);
+      if (state.pending) state.pending = sortedDashboardArticles(state.pending, sort);
+      render();
     }
   }
 
   function setFilter(kind, value) {
     if (kind === 'source') state.source = state.source === value ? '' : value;
     if (kind === 'category') state.category = state.category === value ? '' : value;
+    resetPaging();
     syncUrl();
     render();
   }
@@ -1735,12 +2434,14 @@
     if (kind === 'source') state.source = '';
     if (kind === 'category') state.category = '';
     if (kind === 'unread') state.unreadOnly = false;
+    resetPaging();
     syncUrl();
     render();
   }
 
   function setUnreadOnly(value) {
     state.unreadOnly = value;
+    resetPaging();
     writePref('hs.unread', value ? '1' : '0');
     render();
   }
@@ -1755,12 +2456,13 @@
     };
   }
 
-  // Segmented controls are radiogroups, so they owe the keyboard arrow keys and
-  // Home/End, not just clicks.
+  // Radiogroups owe the keyboard arrow keys and Home/End, not just clicks. The
+  // three groups look nothing alike -- nav tabs, underlined tabs, a segmented
+  // control -- so this matches on the data attribute they do share.
   function wireSegment(container, attribute, onSelect) {
     container.addEventListener('click', function (event) {
-      var button = event.target.closest('.segment__item');
-      if (button) onSelect(button.dataset[attribute], button);
+      var button = event.target.closest('[data-' + attribute + ']');
+      if (button && container.contains(button)) onSelect(button.dataset[attribute], button);
     });
 
     container.addEventListener('keydown', function (event) {
@@ -1796,10 +2498,10 @@
 
   el.search.addEventListener('input', debounce(function () {
     state.query = el.search.value;
+    resetPaging();
     render();
   }, 120));
 
-  el.clearBtn.addEventListener('click', function () { dropFilter('all'); });
   el.unreadBtn.addEventListener('click', function () { setUnreadOnly(!state.unreadOnly); });
   el.refreshBtn.addEventListener('click', refresh);
   el.refreshFromDialog.addEventListener('click', refresh);
@@ -1809,7 +2511,7 @@
   el.healthBtn.addEventListener('click', function () { openSources(); });
 
   el.markReadBtn.addEventListener('click', function () {
-    var articles = visibleArticles();
+    var articles = renderedArticles();
     var changed = 0;
     articles.forEach(function (article) {
       if (markRead(article.id, true)) changed++;
@@ -1817,7 +2519,7 @@
     render();
     toast('success', changed
       ? plural(changed, 'headline') + ' marked read'
-      : 'Everything visible was already read');
+      : 'Everything shown was already read');
   });
 
   /* -- Grid delegation ---------------------------------------------------- */
@@ -1848,6 +2550,11 @@
     } else if (act === 'toggle-pin') {
       togglePinned(trigger.dataset.value);
       render();
+    } else if (act === 'expand-topic') toggleOpen(state.openTopics, trigger.dataset.value, 'topic-');
+    else if (act === 'expand-source') toggleOpen(state.openSources, trigger.dataset.value, 'source-');
+    else if (act === 'load-more') {
+      state.limit += FEED_PAGE;
+      render();
     } else if (act === 'filter-source') setFilter('source', trigger.dataset.value);
     else if (act === 'filter-category') setFilter('category', trigger.dataset.value);
     else if (act === 'manage-source') openSources(trigger.dataset.value);
@@ -1866,39 +2573,62 @@
     if (trigger) dropFilter(trigger.dataset.value);
   });
 
-  // `scroll` does not bubble, so listen on the capture phase instead of binding
-  // a handler per panel on every render.
-  el.grid.addEventListener('scroll', function (event) {
-    if (event.target.classList && event.target.classList.contains('panel__body')) {
-      markOverflow(event.target);
+  // Anchors in the category index scroll rather than jump, so the reader keeps
+  // their place in the page instead of being teleported into it.
+  el.catIndexNav.addEventListener('click', function (event) {
+    var pin = event.target.closest('[data-act="toggle-pin"]');
+    if (pin) {
+      event.preventDefault();
+      togglePinned(pin.dataset.value);
+      render();
+      return;
     }
-  }, true);
+
+    var link = event.target.closest('.catindex__link');
+    if (!link) return;
+    event.preventDefault();
+    scrollToAnchor(link.getAttribute('href').slice(1));
+  });
+
+  el.jump.addEventListener('change', function () { scrollToAnchor(el.jump.value); });
+
+  window.addEventListener('scroll', updateActiveTopic, { passive: true });
 
   el.themeBtn.addEventListener('click', function () {
     var current = readPref('hs.theme', 'system');
     switchTheme(THEMES[(THEMES.indexOf(current) + 1) % THEMES.length], el.themeBtn);
   });
 
-  /* -- Export menu -------------------------------------------------------- */
+  /* -- Reading tools menu ------------------------------------------------- */
 
-  function closeExportMenu() {
-    el.exportMenu.hidden = true;
-    el.exportBtn.setAttribute('aria-expanded', 'false');
+  function closeMoreMenu() {
+    el.moreMenu.hidden = true;
+    el.moreBtn.setAttribute('aria-expanded', 'false');
   }
 
-  el.exportBtn.addEventListener('click', function (event) {
+  el.moreBtn.addEventListener('click', function (event) {
     event.stopPropagation();
-    var open = el.exportMenu.hidden;
-    el.exportMenu.hidden = !open;
-    el.exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var open = el.moreMenu.hidden;
+    el.moreMenu.hidden = !open;
+    el.moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
 
-  el.exportMenu.addEventListener('click', function (event) {
+  el.moreMenu.addEventListener('click', function (event) {
+    // Everything left in here is an errand -- it runs once and it is done --
+    // so any click dismisses the menu on its way out.
+    closeMoreMenu();
+
+    var transfer = event.target.closest('[data-state]');
+    if (transfer) {
+      if (transfer.dataset.state === 'import') el.stateFile.click();
+      else downloadReadingState();
+      return;
+    }
+
     var trigger = event.target.closest('[data-export]');
-    closeExportMenu();
     if (!trigger) return;
 
-    var articles = visibleArticles();
+    var articles = renderedArticles();
     var text = trigger.dataset.export === 'markdown'
       ? articles.map(function (a) {
           return '- [' + a.title + '](' + a.link + ') — ' + a.source +
@@ -1917,8 +2647,51 @@
     });
   });
 
+  function downloadReadingState() {
+    var blob = new Blob([JSON.stringify(readingStateDocument(), null, 2)],
+      { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = 'high-signal-reading-state.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast('success', plural(store.saved.length, 'saved item') + ' and ' +
+      plural(store.read.length, 'read headline') + ' saved to a file');
+  }
+
+  el.stateFile.addEventListener('change', function () {
+    var file = el.stateFile.files && el.stateFile.files[0];
+    if (!file) return;
+    // Reset first: choosing the same file twice should still fire a change.
+    el.stateFile.value = '';
+    if (file.size > 8 * 1024 * 1024) {
+      toast('error', 'That file is too large to be a reading state export.');
+      return;
+    }
+    file.text().then(function (text) {
+      var added = mergeReadingState(JSON.parse(text));
+      var counts = [
+        added.saved ? plural(added.saved, 'saved item') : '',
+        added.read ? plural(added.read, 'read headline') : '',
+        added.hidden ? plural(added.hidden, 'hidden headline') : '',
+        added.pinned ? plural(added.pinned, 'pinned category') : ''
+      ].filter(Boolean);
+      render();
+      toast('success', counts.length
+        ? 'Merged ' + counts.join(', ')
+        : 'That file held nothing this browser did not already have');
+    }).catch(function (error) {
+      toast('error', error instanceof SyntaxError
+        ? 'That file is not valid JSON.'
+        : error.message || 'Could not read that file.');
+    });
+  });
+
   document.addEventListener('click', function (event) {
-    if (!el.exportMenu.hidden && !event.target.closest('.menu')) closeExportMenu();
+    if (!el.moreMenu.hidden && !event.target.closest('.menu')) closeMoreMenu();
   });
 
   /* -- Dialogs ------------------------------------------------------------ */
@@ -1931,6 +2704,19 @@
     });
   });
 
+  el.adminToken.addEventListener('input', debounce(function () {
+    state.adminToken = el.adminToken.value.trim();
+    state.adminSources = {};
+    if (!state.adminToken) {
+      el.adminStatus.textContent = hostedSourceMode()
+        ? 'Public source health is visible. Owner actions require the token for this session.'
+        : 'Local source controls do not require an owner token.';
+      renderSourceList();
+      return;
+    }
+    loadAdminSources().catch(function () {});
+  }, 250));
+
   el.sourceList.addEventListener('click', function (event) {
     var trigger = event.target.closest('[data-src-act]');
     if (!trigger) return;
@@ -1941,6 +2727,10 @@
     if (!config) return;
 
     var act = trigger.dataset.srcAct;
+    if (!canManageSources()) {
+      toast('error', 'Enter the owner token first.');
+      return;
+    }
 
     if (act === 'test') {
       var target = rowNode.querySelector('.srow__result');
@@ -1954,14 +2744,19 @@
 
     if (act === 'toggle') {
       var enable = trigger.getAttribute('aria-pressed') !== 'true';
-      fetchJson('/api/sources/' + encodeURIComponent(name), {
+      var toggleUrl = hostedSourceMode()
+        ? '/api/admin/sources/' + encodeURIComponent(config.id)
+        : '/api/sources/' + encodeURIComponent(name);
+      fetchJson(toggleUrl, {
+        admin: hostedSourceMode(),
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: enable })
+        body: JSON.stringify(hostedSourceMode()
+          ? { revision: config.revision, changes: { enabled: enable } }
+          : { enabled: enable })
       }).then(function () {
-        return fetchJson('/api/sources');
-      }).then(function (health) {
-        applyHealth(health);
+        return hostedSourceMode() ? loadAdminSources() : fetchJson('/api/sources').then(applyHealth);
+      }).then(function () {
         renderSourceList(name);
         render();
         toast('success', name + (enable ? ' enabled' : ' disabled'));
@@ -1972,11 +2767,19 @@
     }
 
     if (act === 'delete') {
-      if (!window.confirm('Remove "' + name + '" from sources.json?')) return;
-      fetchJson('/api/sources/' + encodeURIComponent(name), { method: 'DELETE' })
-        .then(function () { return fetchJson('/api/sources'); })
-        .then(function (health) {
-          applyHealth(health);
+      if (!window.confirm('Remove "' + name + '" from shared sources?')) return;
+      var deleteUrl = hostedSourceMode()
+        ? '/api/admin/sources/' + encodeURIComponent(config.id)
+        : '/api/sources/' + encodeURIComponent(name);
+      fetchJson(deleteUrl, {
+        admin: hostedSourceMode(), method: 'DELETE',
+        headers: hostedSourceMode() ? { 'Content-Type': 'application/json' } : {},
+        body: hostedSourceMode() ? JSON.stringify({ revision: config.revision }) : undefined
+      })
+        .then(function () {
+          return hostedSourceMode() ? loadAdminSources() : fetchJson('/api/sources').then(applyHealth);
+        })
+        .then(function () {
           renderSourceList();
           render();
           toast('success', name + ' removed');
@@ -2036,7 +2839,12 @@
     event.preventDefault();
     var payload = addSourcePayload();
 
-    fetchJson('/api/sources', {
+    if (!canManageSources()) {
+      toast('error', 'Enter the owner token first.');
+      return;
+    }
+    fetchJson(hostedSourceMode() ? '/api/admin/sources' : '/api/sources', {
+      admin: hostedSourceMode(),
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2045,9 +2853,8 @@
       resetDiscovery();
       el.testPreview.hidden = true;
       el.addSource.open = false;
-      return fetchJson('/api/sources');
-    }).then(function (health) {
-      applyHealth(health);
+      return hostedSourceMode() ? loadAdminSources() : fetchJson('/api/sources').then(applyHealth);
+    }).then(function () {
       renderSourceList(payload.name);
       toast('success', payload.name + ' added — it will appear after the next scrape');
     }).catch(function (error) {
@@ -2068,10 +2875,11 @@
     if (el.sourcesDialog.open || el.helpDialog.open) return;
 
     if (event.key === 'Escape') {
-      if (!el.exportMenu.hidden) { closeExportMenu(); return; }
+      if (!el.moreMenu.hidden) { closeMoreMenu(); return; }
       if (document.activeElement === el.search) {
         el.search.value = '';
         state.query = '';
+        resetPaging();
         render();
         el.search.blur();
       } else if (state.expandedId) {
@@ -2122,8 +2930,8 @@
         el.helpDialog.showModal();
         break;
       case '1': selectView('feed'); break;
-      case '2': selectView('sources'); break;
-      case '3': selectView('categories'); break;
+      case '2': selectView('categories'); break;
+      case '3': selectView('sources'); break;
       case '4': selectView('saved'); break;
       default: break;
     }
@@ -2153,7 +2961,15 @@
 
   load().catch(function () {});
 
-  setInterval(function () { load({ silent: true }).catch(function () {}); }, POLL_MS);
+  setInterval(function () {
+    if (!document.hidden) load({ silent: true }).catch(function () {});
+  }, POLL_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+      load({ silent: true }).catch(function () {});
+      scheduleSourceToolPoll();
+    }
+  });
   setInterval(function () {
     if (state.status === 'ready') renderFreshness();
   }, 20000);

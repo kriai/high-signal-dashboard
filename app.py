@@ -11,6 +11,7 @@ the UI follows `/api/refresh/status` for a determinate progress bar.
 """
 
 import atexit
+import copy
 import ipaddress
 import os
 import random
@@ -18,6 +19,7 @@ import threading
 import time
 import uuid
 from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from email.utils import format_datetime
 from xml.sax.saxutils import escape as xml_escape
@@ -44,21 +46,46 @@ SCRAPE_INTERVAL_MINUTES = 30
 STALE_AFTER = timedelta(minutes=SCRAPE_INTERVAL_MINUTES * 2)
 SOURCES_FILE = 'sources.json'
 
+# Local on-demand summaries persist in a sidecar. Hosted clicks are cached in
+# memory/browser only; CI warms summaries before its single cache.json upload.
+SUMMARIES_FILE = 'summaries.json'
+
+# Bounded the same way the client's local stores are: it only ever needs the
+# articles currently on the page, so entries for headlines that have dropped
+# out are dropped too, with a cap as the backstop.
+SUMMARY_CACHE_CAP = 1200
+
+# The fallback line means "the fetch failed", not "this article has no
+# summary". Letting it expire is what turns a transient 403 back into a real
+# summary later instead of freezing the placeholder forever.
+SUMMARY_RETRY_AFTER = timedelta(hours=6)
+
+# Warming the summaries a reader is most likely to open, in CI, where there is
+# no invocation cap. Measured at ~0.07s per article across eight workers, so
+# the whole band below costs a few seconds on a job that already runs ~90.
+#
+# Deliberately not "every article": most headlines are never expanded, and a
+# fetch nobody reads is still a page pulled off someone's server. SCORE_MID is
+# the app's own "worth reading" line and the toolbar's 60+ filter, which makes
+# it the honest boundary for "likely to be opened" -- roughly 100 of the ~130
+# new articles a day, where the top 20 alone would be a coin flip.
+SUMMARY_WARM_LIMIT = int(os.environ.get('SUMMARY_WARM_LIMIT', 100))
+SUMMARY_WARM_MIN_SCORE = int(os.environ.get('SUMMARY_WARM_MIN_SCORE', SCORE_MID))
+SUMMARY_WARM_BUDGET_SECONDS = int(
+    os.environ.get('SUMMARY_WARM_BUDGET_SECONDS', 90))
+SUMMARY_WARM_WORKERS = 8
+
 # Serverless only. How long an instance may serve the copy of the cache it
 # already has before re-reading it from the store.
 STATE_TTL = 60
 
-# Budget for a scrape a person is sitting and waiting on. The scheduled full
-# pass runs in CI (see scrape_job.py); this one runs inside a request, so it is
-# short enough that the button feels like it did something and covers the
-# sources that have gone longest without a check.
-MANUAL_SCRAPE_BUDGET_SECONDS = int(
-    os.environ.get('MANUAL_SCRAPE_BUDGET_SECONDS', 45))
 
 scraper = HighSignalScraper()
 cached_articles = []
+summary_cache = {}
 last_scrape_at = None
 state_loaded_at = 0
+state_error = None
 load_lock = threading.Lock()
 
 @app.before_request
@@ -69,8 +96,12 @@ def _hydrate():
     ensure_loaded. Registered as a hook rather than sprinkled through the
     routes so a new endpoint cannot forget it.
     """
-    if store.is_remote():
+    if store.is_remote() and request.endpoint != 'static' and request.path != '/':
         ensure_loaded()
+        if state_error and (last_scrape_at is None or
+                            (request.path.startswith('/api/sources') and
+                             request.method in ('POST', 'PATCH', 'DELETE'))):
+            return jsonify({'error': 'Saved feed is unavailable. Please retry shortly.'}), 503
 
 
 # == Refresh job ============================================================
@@ -91,11 +122,16 @@ refresh_job = {
 }
 
 
+SUMMARY_FIELDS = ('summary', 'summary_source', 'summary_checked_at',
+                  'summary_error')
+
+
 def _summarize(articles):
     """Normalize summary fields without inventing prose.
 
     Older caches contain generated placeholder text. Clear it so the client can
-    lazily ask for a real token-free summary when the detail row is opened.
+    lazily ask for a real token-free summary when the detail row is opened, and
+    fold in anything already fetched into the sidecar.
     """
     for article in articles:
         if is_generated_summary(article.get('summary')):
@@ -106,14 +142,161 @@ def _summarize(articles):
         else:
             article.setdefault('summary_source', '')
 
+        # A feed summary came with the article and costs nothing, so it wins;
+        # the sidecar only fills what the scrape left empty. Same precedence
+        # the scrape's own carry-forward uses.
+        entry = summary_cache.get(article.get('id'))
+        if entry and not article.get('summary'):
+            for field in SUMMARY_FIELDS:
+                if entry.get(field):
+                    article[field] = entry[field]
+
+
+def load_summaries():
+    """Read the fetched-summary sidecar into this process."""
+    global summary_cache
+    if store.is_remote():
+        return
+    data = store.read_json(SUMMARIES_FILE, {})
+    summary_cache = data if isinstance(data, dict) else {}
+
+
+def _hold_summary(article):
+    """Copy one article's summary fields into the sidecar, without writing."""
+    summary_cache[article['id']] = {
+        field: article.get(field) for field in SUMMARY_FIELDS
+        if article.get(field)
+    }
+
+
+def _persist_summaries():
+    """Prune and write the sidecar. One store write, however many summaries.
+
+    Pruned against the articles on the page, so the file tracks the size of the
+    corpus instead of growing for the life of the deployment. A headline that
+    drops off and comes back is simply fetched again.
+    """
+    live = set(a.get('id') for a in cached_articles)
+    if live:
+        for stale in [key for key in summary_cache if key not in live]:
+            del summary_cache[stale]
+    if len(summary_cache) > SUMMARY_CACHE_CAP:
+        keep = sorted(summary_cache.items(),
+                      key=lambda kv: kv[1].get('summary_checked_at') or '',
+                      reverse=True)[:SUMMARY_CACHE_CAP]
+        summary_cache.clear()
+        summary_cache.update(keep)
+
+    if not store.is_remote():
+        store.write_json(SUMMARIES_FILE, summary_cache)
+
+
+def record_summary(article):
+    """Cache one summary; remote requests never upload it."""
+    _hold_summary(article)
+    _persist_summaries()
+
+
+def _apply_summary(article, summary, source, error):
+    article['summary'] = summary
+    article['summary_source'] = source
+    article['summary_checked_at'] = datetime.now().isoformat()
+    if error:
+        article['summary_error'] = error
+    else:
+        article.pop('summary_error', None)
+
+
+def _round_robin_hosts(articles):
+    """Reorder a queue so consecutive fetches rarely share a host.
+
+    Eight workers taken off a score-sorted list would open eight arxiv.org
+    connections at once -- arxiv alone accounts for 18 of the ~126 articles
+    waiting on a summary. Dealing one per host at a time keeps the concurrency
+    without pointing all of it at one server.
+    """
+    buckets = {}
+    for article in articles:
+        host = (urlparse(article.get('link') or '').hostname or '').lower()
+        buckets.setdefault(host, []).append(article)
+
+    ordered = []
+    while buckets:
+        for host in list(buckets):
+            ordered.append(buckets[host].pop(0))
+            if not buckets[host]:
+                del buckets[host]
+    return ordered
+
+
+def warm_summaries(limit=None, min_score=None, budget=None):
+    """Pre-fetch the summaries a reader is most likely to open. CI only.
+
+    Called by scrape_job.py before publishing a full pass. Hosted warming
+    updates the article snapshot in memory without writing a summary sidecar.
+
+    A fallback line is deliberately *not* recorded here. Five sources already
+    403 from Actions runners that answer a laptop fine (see DEPLOY.md), and
+    article pages hit the same wall, so a failure in CI means "this IP could
+    not get it" rather than "there is nothing to get". Leaving those articles
+    empty keeps the lazy path free to try again from Vercel, which is a
+    different address.
+
+    Returns (warmed, attempted).
+    """
+    limit = SUMMARY_WARM_LIMIT if limit is None else limit
+    min_score = SUMMARY_WARM_MIN_SCORE if min_score is None else min_score
+    budget = SUMMARY_WARM_BUDGET_SECONDS if budget is None else budget
+
+    targets = [a for a in cached_articles
+               if not has_cached_summary(a)
+               and a.get('signal_score', 0) >= min_score
+               and is_public_url(a.get('link') or '')]
+    targets.sort(key=lambda a: a.get('signal_score', 0), reverse=True)
+    targets = _round_robin_hosts(targets[:limit])
+    if not targets:
+        return 0, 0
+
+    deadline = time.time() + budget
+
+    def fetch(article):
+        if time.time() >= deadline:
+            return None
+        return article, scraper.fetch_article_summary(article)
+
+    warmed = 0
+    with ThreadPoolExecutor(SUMMARY_WARM_WORKERS) as pool:
+        for result in pool.map(fetch, targets):
+            if result is None:
+                continue
+            article, (summary, source, error) = result
+            if source == 'metadata':
+                continue
+            _apply_summary(article, summary, source, error)
+            _hold_summary(article)
+            warmed += 1
+
+    if warmed:
+        _persist_summaries()
+    return warmed, len(targets)
+
 
 def find_article(article_id):
     return next((a for a in cached_articles if a.get('id') == article_id), None)
 
 
 def has_cached_summary(article):
-    return bool(article.get('summary')) and \
-        not is_generated_summary(article.get('summary'))
+    summary = article.get('summary')
+    if not summary or is_generated_summary(summary):
+        return False
+    if article.get('summary_source') != 'metadata':
+        return True
+
+    # Only the fallback line expires, and only once it is old enough that a
+    # retry is worth a fetch. An entry with no timestamp predates this and is
+    # retried once, which is how the existing placeholders get upgraded.
+    checked = _parse(article.get('summary_checked_at'))
+    return bool(checked) and datetime.now() - checked < SUMMARY_RETRY_AFTER
 
 
 def _progress(done, total, source):
@@ -121,13 +304,13 @@ def _progress(done, total, source):
         refresh_job.update(done=done, total=total, source=source)
 
 
-def scrape_and_cache(job_id=None, deadline=None):
+def scrape_and_cache(job_id=None, deadline=None, warm=False):
     """Run a scrape and swap it into the cache. Blocking; call in a thread.
 
-    `deadline` caps the pass for serverless, where the invocation itself is
-    capped; see HighSignalScraper.scrape_all.
+    CI prepares summaries before the one remote upload. Publication failures
+    restore the previous in-memory snapshot and its successful timestamp.
     """
-    global cached_articles, last_scrape_at
+    global cached_articles, last_scrape_at, state_error
 
     with refresh_lock:
         refresh_job.update(job_id=job_id, state='running', done=0,
@@ -136,17 +319,28 @@ def scrape_and_cache(job_id=None, deadline=None):
                            finished_at=None)
 
     print('🔄 Running scrape...')
+    previous = (cached_articles, last_scrape_at, copy.deepcopy(scraper.health),
+                scraper.articles, scraper.previous_by_id, scraper.last_run,
+                dict(summary_cache))
     try:
         articles = scraper.scrape_all(progress=_progress, deadline=deadline)
         _summarize(articles)
         cached_articles = articles
-        last_scrape_at = datetime.now()
+        if warm:
+            warmed, attempted = warm_summaries()
+            print(f'📝 Warmed {warmed}/{attempted} summaries')
         scraper.save_to_cache()
+        last_scrape_at = _parse(scraper.last_run)
+        state_error = None
         print(f'✅ Cached {len(articles)} articles')
         state, error = 'done', None
     except Exception as exc:                                 # noqa: BLE001
         # A failed scrape must not take the server with it; the previous cache
         # stays served and the UI surfaces the error.
+        (cached_articles, last_scrape_at, scraper.health, scraper.articles,
+         scraper.previous_by_id, scraper.last_run, previous_summaries) = previous
+        summary_cache.clear()
+        summary_cache.update(previous_summaries)
         print(f'❌ Scrape failed: {exc}')
         state, error = 'error', f'{type(exc).__name__}: {exc}'[:300]
 
@@ -184,33 +378,49 @@ def start_refresh(background=True, deadline=None):
     return job_id, True
 
 
-def load_state():
-    """Pull the cache and health table into this process."""
-    global cached_articles, last_scrape_at, state_loaded_at
+def load_state(allow_empty=False):
+    """Read a complete snapshot before replacing any live state."""
+    global cached_articles, last_scrape_at, state_loaded_at, state_error
 
-    scraper.load_health()
-    cached_articles = scraper.load_cache()
-    _summarize(cached_articles)
-    last_scrape_at = _parse(scraper.last_run)
+    candidate = copy.copy(scraper)
+    candidate.health = {}
+    candidate.articles = []
+    candidate.previous_by_id = {}
+    candidate.last_run = None
+    if store.is_remote():
+        # Reload sources too, so edits propagate between server instances.
+        candidate.reload_sources(SOURCES_FILE)
+    else:
+        candidate.load_health()
+        load_summaries()
+    articles = candidate.load_cache()
+    if store.is_remote() and not candidate.last_run and not allow_empty:
+        raise store.StoreUnavailable('No published feed is available yet')
+    _summarize(articles)
+    for field in ('sources', 'source_by_name', 'health', 'articles',
+                  'previous_by_id', 'last_run'):
+        setattr(scraper, field, getattr(candidate, field))
+    cached_articles = articles
+    last_scrape_at = _parse(candidate.last_run)
     state_loaded_at = time.time()
+    state_error = None
     print(f'📦 Loaded {len(cached_articles)} cached articles')
 
 
-def ensure_loaded():
-    """Make sure this instance has state, and that it is not too old.
-
-    A long-lived local server loads once at boot. Serverless has no boot: every
-    instance starts empty, and the instance that answers a request is rarely the
-    one that ran the last scrape, so state is loaded on first use and re-read
-    once it ages past STATE_TTL. The read is cheap -- one listing plus one CDN
-    download -- next to re-scraping.
-    """
-    if state_loaded_at and time.time() - state_loaded_at < STATE_TTL:
+def ensure_loaded(force=False):
+    """Retry at most once a minute per instance; retain good state on errors."""
+    global state_loaded_at, state_error
+    if not force and state_loaded_at and time.time() - state_loaded_at < STATE_TTL:
         return
     with load_lock:
-        if state_loaded_at and time.time() - state_loaded_at < STATE_TTL:
+        if not force and state_loaded_at and time.time() - state_loaded_at < STATE_TTL:
             return
-        load_state()
+        try:
+            load_state()
+        except (store.StoreUnavailable, ValueError, TypeError, KeyError) as exc:
+            state_error = 'Saved feed could not be updated. Showing the last successful load.'
+            state_loaded_at = time.time()
+            print(f'⚠️  State reload failed: {exc}')
 
 
 def boot():
@@ -356,6 +566,20 @@ def get_feed():
     return jsonify(articles[:limit] if limit > 0 else articles)
 
 
+@app.route('/api/dashboard')
+def get_dashboard():
+    """One bundled read shared with the Cloudflare Worker client contract."""
+    generated_at = last_scrape_at.isoformat() if last_scrape_at else None
+    return jsonify({
+        'schema_version': 1,
+        'publication_id': 'local-' + (generated_at or 'empty'),
+        'generated_at': generated_at,
+        'articles': sort_articles(cached_articles, 'score'),
+        'stats': stats_payload(),
+        'sources': source_status_payload(),
+    })
+
+
 @app.route('/api/articles')
 def get_articles():
     limit = request.args.get('limit', 50, type=int)
@@ -454,16 +678,8 @@ def get_article_summary(article_id):
             summary, source = metadata_summary(article), 'metadata'
             error = 'Article URL is not public'
 
-        article['summary'] = summary
-        article['summary_source'] = source
-        article['summary_checked_at'] = datetime.now().isoformat()
-        if error:
-            article['summary_error'] = error
-        else:
-            article.pop('summary_error', None)
-
-        scraper.articles = cached_articles
-        scraper.save_to_cache()
+        _apply_summary(article, summary, source, error)
+        record_summary(article)
 
         return jsonify({
             'id': article_id,
@@ -512,6 +728,10 @@ def get_sources():
     dashboard silently. Every configured source appears here with a state, the
     HTTP status, the error text and the last time it succeeded.
     """
+    return jsonify(source_status_payload())
+
+
+def source_status_payload():
     live_counts = {}
     for article in cached_articles:
         live_counts[article['source']] = live_counts.get(article['source'], 0) + 1
@@ -528,19 +748,20 @@ def get_sources():
     for row in rows:
         states[row['state']] = states.get(row['state'], 0) + 1
 
-    return jsonify({
+    return {
         'sources': rows,
         'total': len(rows),
         'ok': states.get('ok', 0),
         'failing': states.get('error', 0) + states.get('empty', 0),
         'disabled': states.get('disabled', 0),
         'states': states,
-    })
+    }
 
 
 def _write_sources(sources):
     write_json_atomic(SOURCES_FILE, {'sources': sources})
-    scraper.reload_sources(SOURCES_FILE)
+    scraper.sources = sources
+    scraper.source_by_name = {source['name']: source for source in sources}
 
 
 def _clean_source_payload(payload, existing=None):
@@ -933,16 +1154,13 @@ def refresh():
     proxy.
     """
     if store.is_remote():
-        # Serverless. A daemon thread is frozen along with the instance as soon
-        # as this response is sent, and the client's status polls would land on
-        # a different instance with no memory of the job in any case. So scrape
-        # inline on a short budget -- least-recently-checked sources first --
-        # and hand back an already-finished job for the client to act on.
-        start_refresh(background=False,
-                      deadline=time.time() + MANUAL_SCRAPE_BUDGET_SECONDS)
-        with refresh_lock:
-            snapshot = dict(refresh_job)
-        return jsonify({'status': 'completed', 'job': snapshot}), 200
+        # The workflow is the only remote snapshot writer. Per-instance locks
+        # cannot bound writes from concurrent visitors on different instances.
+        ensure_loaded(force=True)
+        if state_error:
+            return jsonify({'error': state_error}), 503
+        return jsonify({'status': 'checked',
+                        'message': 'Checked the latest saved feed. Sources are checked on a 30-minute schedule.'})
 
     job_id, started = start_refresh()
     with refresh_lock:
@@ -963,6 +1181,10 @@ def refresh_status():
 
 @app.route('/api/stats')
 def get_stats():
+    return jsonify(stats_payload())
+
+
+def stats_payload():
     sources = set(a['source'] for a in cached_articles)
     categories = set(article_category(a) for a in cached_articles)
     scores = [a.get('signal_score', 0) for a in cached_articles]
@@ -975,13 +1197,15 @@ def get_stats():
     with refresh_lock:
         job = dict(refresh_job)
 
-    return jsonify({
+    return {
         'total_articles': len(cached_articles),
         'total_sources': len(sources),
         'total_categories': len(categories),
         'high_signal_count': len(high_signal),
         'avg_score': round(sum(scores) / len(scores)) if scores else 0,
         'last_update': last_scrape_at.isoformat() if last_scrape_at else None,
+        'storage_error': state_error,
+        'refresh_mode': 'check' if store.is_remote() else 'scrape',
         'next_update': next_run.isoformat() if next_run else None,
         'thresholds': {'high': SCORE_HIGH, 'mid': SCORE_MID},
         'sources_configured': len(health),
@@ -990,7 +1214,7 @@ def get_stats():
         'sources_disabled': sum(1 for h in health if h['state'] == 'disabled'),
         'failing_names': [h['name'] for h in failing][:12],
         'refresh': job,
-    })
+    }
 
 
 @app.route('/api/health')
@@ -999,7 +1223,8 @@ def health_check():
     age = (datetime.now() - last_scrape_at).total_seconds() \
         if last_scrape_at else None
     return jsonify({
-        'status': 'ok' if cached_articles else 'empty',
+        'status': 'degraded' if state_error else ('ok' if cached_articles else 'empty'),
+        'storage_error': state_error,
         'articles': len(cached_articles),
         'age_seconds': age,
         'stale': age is None or age > STALE_AFTER.total_seconds(),
@@ -1102,7 +1327,7 @@ if store.is_remote():
     # of: the scheduled scrape runs in CI (scrape_job.py) and publishes to the
     # Blob store, and each instance hydrates itself from that on first use.
     print('▲ Serverless mode — scheduled scraping runs in CI')
-elif owns_background():
+elif owns_background() and os.environ.get('SCRAPE_JOB') != '1':
     scheduler.start()
     boot()
     atexit.register(lambda: scheduler.shutdown(wait=False))

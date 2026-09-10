@@ -1,0 +1,101 @@
+name: Check and deploy Worker
+
+# The website is code; the feed is data. Publishing a scrape must never
+# redeploy this Worker, so deployment runs only on changes to the code that
+# builds the site and on explicit dispatch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'templates/**'
+      - 'static/**'
+      - 'scripts/build_static.py'
+      - 'migrations/**'
+      - 'wrangler.jsonc'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    paths:
+      - 'worker/**'
+      - 'templates/**'
+      - 'static/**'
+      - 'scripts/**'
+      - 'migrations/**'
+      - '*.py'
+      - 'wrangler.jsonc'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Wrangler environment to deploy
+        required: true
+        default: preview
+        type: choice
+        options: [preview, production]
+
+concurrency:
+  group: deploy-worker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Pull requests get the full regression suite and no deployment credentials.
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: pip install -r requirements.txt
+      - run: npm ci
+      - name: Python regressions
+        run: python -m unittest discover -s tests -v
+      - name: TypeScript, client JavaScript and Worker contracts
+        run: npm run check && npm test
+      - name: Static asset build
+        run: npm run build
+      - name: Deployment dry run
+        run: npx wrangler deploy --env preview --dry-run
+
+  deploy:
+    needs: checks
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Defaults to the preview Worker. Production is a deliberate dispatch.
+      TARGET: ${{ inputs.target || 'preview' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build static assets
+        run: npm run build
+      - name: Deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          # Until the owner configures Cloudflare credentials, keep main green
+          # and say so instead of failing every push with an auth error.
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::notice::Cloudflare credentials are not configured; skipped $TARGET deployment"
+            exit 0
+          fi
+          npx wrangler deploy --env "$TARGET" \
+            --message "${GITHUB_SHA:0:7} via ${GITHUB_WORKFLOW}"

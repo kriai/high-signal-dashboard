@@ -1,0 +1,7 @@
+# Local Worker development only. Copy to .dev.vars and fill in real values.
+ADMIN_API_TOKEN=replace-with-a-long-random-token
+GITHUB_ACTIONS_TOKEN=replace-with-a-fine-grained-actions-token
+GITHUB_REPOSITORY=owner/high-signal-dashboard
+GITHUB_WORKFLOW_REF=main
+# Local-only escape hatch: queues jobs without contacting GitHub.
+# GITHUB_DISPATCH_DISABLED=1

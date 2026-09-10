@@ -1,0 +1,32 @@
+name: Process source tool
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: D1 source-tool job ID
+        required: true
+        type: string
+
+concurrency:
+  group: source-tool-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Claim and process validated job
+        env:
+          SOURCE_TOOL_JOB_ID: ${{ inputs.job_id }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_D1_DATABASE_ID: ${{ vars.CLOUDFLARE_D1_DATABASE_ID }}
+          CLOUDFLARE_D1_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_API_TOKEN }}
+        run: python source_tool_job.py

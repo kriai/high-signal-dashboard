@@ -5,20 +5,22 @@
 /* == Type system ==========================================================
    Three families, three jobs, and nothing outside them:
 
-     Newsreader      the editorial voice -- the wordmark, page headings,
-                     article headlines and publisher summaries. Loaded as the
-                     variable cut, so `font-optical-sizing: auto` walks the
-                     opsz axis with the type size: a 32px masthead and a 16px
-                     card headline get different drawings of the same face.
-     IBM Plex Sans   everything the app says in its own voice -- navigation,
-                     tabs, buttons, search, filters, labels, and the source and
-                     category names that title a panel.
+     Newsreader      the editorial voice -- the wordmark, the page and section
+                     headings, and publisher summaries. Loaded as the variable
+                     cut, so `font-optical-sizing: auto` walks the opsz axis
+                     with the type size: a 29px masthead and a 34px topic
+                     heading get different drawings of the same face.
+     IBM Plex Sans   everything the reader is meant to scan rather than savour
+                     -- headlines, metadata, navigation, tabs, buttons, search,
+                     filters and labels. Headlines are sans on purpose: the
+                     serif marks where a section begins, the sans carries the
+                     two hundred titles inside it.
      IBM Plex Mono   numbers and machine metadata -- signal scores, score
                      deltas, relative ages, the scrape counter, CSS selectors
                      and keyboard keys.
 
    Weights are deliberately few: 400/500/600 in the sans, 400/500 in the mono,
-   400-600 variable in Newsreader. 600 is reserved for panel and dialog
+   400-600 variable in Newsreader. 600 is reserved for section and dialog
    headings and for the uppercase micro-labels that need it at 12px; every
    control that used to be 600 is now 500.
 
@@ -52,8 +54,8 @@
 /* The editorial voice. Optical sizing is `auto` by default; it is stated so
    the reason Newsreader is loaded as a variable font survives future edits. */
 .brand__name,
-.pagehead__title,
-.row__title,
+.topic__title,
+.srccard__title,
 .detail__summary,
 .preview__list li span:last-child,
 .candidate__preview li {
@@ -65,12 +67,13 @@
    a score, an age or a counter sits on the same baseline as the interface
    text beside it, and its digits are fixed-width without asking. */
 .row__score,
+.row__pos,
 .row__age,
-.chip--also,
+.row__also,
+.catindex__count,
 .progress__label,
 .bd__delta,
 .bd__total span:last-child,
-.panel:not(.panel--broken) > .panel__header > .badge,
 .preview__list .badge,
 kbd,
 code {
@@ -79,9 +82,9 @@ code {
 
 .shell {
   width: 100%;
-  max-width: 108rem;
+  max-width: 82.5rem;
   margin-inline: auto;
-  padding-inline: 1.875rem;
+  padding-inline: 2.5rem;
 }
 
 .skip {
@@ -100,28 +103,43 @@ code {
 
 .skip:focus { top: 0.75rem; }
 
-/* == App bar ============================================================== */
+/* Present to the accessibility tree and to `document.title`, absent from the
+   page. Clipped rather than `display: none` so it is still announced. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* == App bar ==============================================================
+   Masthead, the four views, search. The app's own errands sit to the right as
+   icons, so the widest thing in the bar is always the reader's own business. */
 .appbar {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: color-mix(in srgb, var(--bg-default) 96%, transparent);
+  background: color-mix(in srgb, var(--bg-canvas) 94%, transparent);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-muted);
 }
 
 .appbar__inner {
-  display: grid;
-  grid-template-columns: minmax(20rem, 1fr) minmax(20rem, 30rem) minmax(20rem, 1fr);
+  display: flex;
   align-items: center;
-  gap: 1.5rem;
-  height: 4.25rem;
+  gap: 2rem;
+  height: 5rem;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 1.75rem;
+  gap: 2.375rem;
   min-width: 0;
 }
 
@@ -130,19 +148,36 @@ code {
   color: var(--fg-default);
   /* Newsreader carries a small x-height, so the masthead needs a little more
      size than the wide serif it replaces to hold the same optical weight. */
-  font-size: 2rem;
+  font-size: 1.8125rem;
   line-height: 1;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.035em;
 }
 
-.brand__tagline {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.75rem;
-  line-height: 1.125rem;
+.viewnav {
+  display: flex;
+  align-items: center;
+  gap: 1.375rem;
+}
+
+.viewnav__item {
+  padding-block: 0.5rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
   color: var(--fg-muted);
+  font-size: 0.8125rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--duration-normal) var(--ease-default);
+}
+
+.viewnav__item:hover { color: var(--accent-text); }
+
+.viewnav__item[aria-checked='true'] {
+  color: var(--fg-default);
+  border-bottom-color: var(--fg-default);
 }
 
 /* The dot is a status light, not decoration: it only pulses green while the
@@ -180,8 +215,8 @@ code {
 .search {
   position: relative;
   width: 100%;
-  max-width: 30rem;
-  justify-self: center;
+  max-width: 19.5rem;
+  margin-left: auto;
 }
 
 .search__icon {
@@ -195,12 +230,14 @@ code {
   pointer-events: none;
 }
 
-.search .input { padding-left: 2.25rem; padding-right: 2.5rem; }
-
 .search .input {
-  border-color: var(--border-subtle);
-  border-radius: 0.5rem;
+  padding-left: 2.25rem;
+  padding-right: 2.5rem;
+  border-color: var(--border-muted);
+  border-radius: 0.3125rem;
+  background: transparent;
   box-shadow: none;
+  font-size: 0.8125rem;
 }
 
 .search__kbd {
@@ -224,13 +261,13 @@ code {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.25rem;
-  min-width: 0;
+  gap: 0.125rem;
+  flex: none;
 }
 
 .appbar__actions .btn:not(.pill) {
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2.125rem;
+  height: 2.125rem;
   padding: 0;
   border-color: transparent;
   background: transparent;
@@ -238,14 +275,16 @@ code {
 }
 
 .appbar__actions .btn:not(.pill):hover:not(:disabled) {
-  background: var(--bg-subtle);
+  background: var(--bg-muted);
   color: var(--fg-default);
 }
+
+.appbar__actions .btn--solid { color: var(--accent-text); }
 
 /* Warning pill: the count of sources that stopped returning headlines. */
 .pill {
   gap: 0.375rem;
-  border-radius: 0.4375rem;
+  border-radius: 0.3125rem;
   border: 1px solid color-mix(in srgb, var(--amber-6) 70%, var(--border-subtle));
   background: var(--bg-default);
   color: var(--fg-default);
@@ -256,6 +295,45 @@ code {
 .pill:hover { background: var(--bg-subtle); }
 .pill svg { width: 0.9375rem; height: 0.9375rem; }
 .pill svg { color: var(--amber-11); }
+
+/* == Jump bar =============================================================
+   The category index below 60rem. It is display:none rather than absent so the
+   two never drift apart; `[hidden]` from the JS still outranks it. */
+.jumpbar {
+  display: none;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.625rem 2.5rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.jumpbar__label {
+  flex: none;
+  font-size: 0.6875rem;
+  color: var(--fg-muted);
+}
+
+.jumpbar__select {
+  flex: 1;
+  min-width: 0;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-default);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: right;
+  appearance: none;
+}
+
+.jumpbar__caret {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--fg-subtle);
+}
 
 /* == Scrape progress ====================================================== */
 .progress {
@@ -302,138 +380,161 @@ code {
 }
 
 .banner[data-tone='error'] {
-  border-color: var(--red-6);
-  background: var(--red-3);
-  color: var(--red-11);
+  border-color: color-mix(in srgb, var(--red-6) 65%, var(--border-subtle));
+  background: color-mix(in srgb, var(--red-3) 30%, var(--bg-default));
+  color: color-mix(in srgb, var(--red-11) 78%, var(--fg-default));
 }
 
 .banner__icon { width: 1.125rem; height: 1.125rem; flex-shrink: 0; }
 .banner .btn { margin-left: auto; color: inherit; }
 .banner .btn::after { content: ' →'; }
 
-/* == Toolbar ============================================================== */
-.pagehead {
+/* == View head ============================================================
+   The ordering choice on the left, the two filters on the right. Every view
+   has this row: the tabs belong to the feed alone and hide themselves
+   elsewhere, but the score floor and unread-only narrow all four, so the row
+   survives them and the tools slide left when the tabs go. The titles and the
+   running count that used to live here are still in the markup, hidden: the
+   nav has already named the view, and the count is worth announcing when a
+   search changes it but not worth a line of the first screen. */
+.viewhead {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 2rem;
-  padding-block: 1.75rem 1.25rem;
-  border-bottom: 1px solid var(--border-subtle);
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  flex-wrap: wrap;
+  padding-top: 1.25rem;
+  border-bottom: 1px solid var(--border-default);
 }
 
-.pagehead__intro {
-  flex: 1 0 auto;
-  min-width: 15rem;
-}
-
-.pagehead__title {
-  color: var(--fg-default);
-  font-size: clamp(2rem, 2.1vw, 2.25rem);
-  line-height: 1.1;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-}
-
-.toolbar {
+/* Without the tabs there is nothing to sit opposite, so the tools take the
+   right edge on their own rather than the left. */
+.viewtools {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  margin-left: auto;
+  padding-bottom: 0.5rem;
 }
 
-.toolbar__count {
-  margin-top: 0.5rem;
+.viewhead[data-view='feed'] .viewtools { padding-bottom: 0.4375rem; }
+
+.viewtools__label {
+  color: var(--fg-subtle);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+/* A filter that is on has to look on from across the page, not only when the
+   pointer is over it -- that is the whole reason these two left the menu. */
+.toggle[aria-checked='true'] {
+  border-color: var(--accent-7);
+  background: var(--accent-3);
+  color: var(--accent-text);
+}
+
+.toggle[aria-checked='true']:hover { background: var(--accent-4); }
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.tabs__item {
+  margin-bottom: -1px;
+  padding: 0.75rem 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
   font-size: 0.8125rem;
   line-height: 1.25rem;
-  color: var(--fg-muted);
-}
-
-.toolbar__count b {
-  color: inherit;
   font-weight: 500;
-  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color var(--duration-normal) var(--ease-default);
 }
 
-.toolbar .segment {
-  gap: 0;
-  height: 2.375rem;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.4375rem;
-  background: transparent;
-}
+.tabs__item:hover { color: var(--fg-default); }
 
-.toolbar .segment__item {
-  height: 100%;
-  padding-inline: 0.875rem;
-  border-radius: 0;
-  color: var(--fg-muted);
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-
-.toolbar .segment__item + .segment__item { border-left: 1px solid var(--border-subtle); }
-
-.toolbar .segment__item[aria-checked='true'],
-.toolbar .btn[aria-pressed='true'] {
-  border-color: #242424;
-  background: #242424;
-  color: #fff;
-  box-shadow: none;
-}
-
-.toolbar > .btn,
-.toolbar > .menu > .btn {
-  height: 2.375rem;
-  border-color: var(--border-subtle);
-  border-radius: 0.4375rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
+.tabs__item[aria-checked='true'] {
+  border-bottom-color: var(--fg-default);
+  color: var(--fg-default);
+  font-weight: 600;
 }
 
 /* == Menu ================================================================= */
 .menu { position: relative; }
-.menu__caret { width: 0.875rem !important; height: 0.875rem !important; }
 
 .menu__list {
   position: absolute;
   right: 0;
   top: calc(100% + 0.375rem);
   z-index: 30;
-  min-width: 13rem;
-  padding: 0.25rem;
+  width: 16rem;
+  padding: 0.625rem;
+  border-radius: var(--radius-l2);
   box-shadow: var(--shadow-lg);
 }
+
+.menu__label {
+  padding: 0.125rem 0.375rem 0.5rem;
+  color: var(--fg-subtle);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.menu__group {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* The score segment used to open the menu; the first group is now the top of
+   it, and a rule there would draw against the card's own edge. */
+.menu__group--first { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .menu__item {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
-  padding: 0.5rem 0.625rem;
+  padding: 0.5rem 0.375rem;
   border: 0;
   border-radius: var(--radius-l1);
   background: transparent;
   color: var(--fg-default);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1.25rem;
   text-align: left;
   cursor: pointer;
 }
 
 .menu__item:hover { background: var(--bg-muted); }
-.menu__item svg { width: 1rem; height: 1rem; color: var(--fg-subtle); }
+.menu__item svg { width: 1rem; height: 1rem; flex: none; color: var(--fg-subtle); }
+
+.menu__item[aria-checked='true'] { color: var(--accent-text); font-weight: 500; }
+.menu__item[aria-checked='true'] svg { color: var(--accent-text); }
 
 /* == Active filters ======================================================= */
+/* Third element of the view head, between the ordering tabs and the two
+   filter controls: the pills sit on the bar they belong to rather than opening
+   a band of their own under it. */
 .filters {
   display: flex;
   align-items: center;
   gap: 0.375rem;
   flex-wrap: wrap;
-  padding-bottom: 1rem;
+  padding-bottom: 0.5rem;
 }
+
+.viewhead[data-view='feed'] .filters { padding-bottom: 0.4375rem; }
+
 
 .filter {
   display: inline-flex;
@@ -441,8 +542,8 @@ code {
   gap: 0.25rem;
   height: 1.75rem;
   padding-inline: 0.625rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 0.375rem;
+  border: 1px solid var(--border-muted);
+  border-radius: 0.3125rem;
   background: transparent;
   color: var(--fg-muted);
   font-size: 0.75rem;
@@ -451,22 +552,18 @@ code {
   cursor: pointer;
 }
 
-.filter:hover { border-color: var(--border-muted); background: var(--bg-subtle); color: var(--fg-default); }
+.filter:hover { border-color: var(--border-default); background: var(--bg-subtle); color: var(--fg-default); }
 .filter__x { width: 0.75rem !important; height: 0.75rem !important; }
 
-.filter--clear {
-  border-color: var(--border-muted);
-  background: transparent;
-  color: var(--fg-muted);
-}
+.filter--clear { border-style: dashed; }
 
 /* == New-items pill ======================================================= */
 .newpill {
   position: sticky;
-  top: 4.75rem;
+  top: 5.75rem;
   z-index: 15;
   display: block;
-  margin: 0 auto 0.75rem;
+  margin: 1rem auto -0.5rem;
   padding: 0.4375rem 1rem;
   border: 0;
   border-radius: var(--radius-full);
@@ -482,433 +579,284 @@ code {
 
 .newpill:hover { background: var(--accent-emphasized); }
 
-/* == Layouts ==============================================================
-   `data-view` on .grid selects between the flat feed (one full-width column)
-   and the panel layouts (source or category), which share every rule below. */
-.grid {
+/* == Reading surface ======================================================
+   One column for the feed, the saved list and the source board; two for the
+   category view, whose left column is both a jump list and the page's table of
+   contents. Nothing here scrolls inside anything else -- the page scroll is
+   the only scroll, which is what lets a headline run as long as it needs to. */
+.reading {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(20.5rem, 1fr));
-  gap: 1rem;
-  align-items: start;
-  padding-block: 1.125rem 3rem;
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.grid[data-view='feed'],
-.grid[data-view='saved'] { grid-template-columns: minmax(0, 1fr); }
+.reading[data-index='on'] {
+  grid-template-columns: 14.5rem minmax(0, 1fr);
+  gap: 4.5rem;
+}
+
+.grid {
+  min-width: 0;
+  padding-block: 2.5rem 5rem;
+}
+
+/* The feed's tab row already opens a gap under the app bar; the others have
+   nothing above them but the bar itself. */
+.grid[data-view='feed'] { padding-top: 1.5rem; }
 
 .grid:focus { outline: none; }
 
-/* == Feed ================================================================= */
-.feed {
-  /* clip, not hidden: both round the rows off against the card, but 'hidden'
-     makes this a scroll container and the row entrance below resolves its
-     view() timeline against the nearest one. */
-  overflow: clip;
-  list-style: none;
+/* Cards are as tall as what is in them. Stretching them to the tallest card in
+   the row bought a straight line along the bottom and paid for it with a void
+   inside every source that had one headline to show. */
+.grid[data-view='sources'] {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16.25rem, 1fr));
+  gap: 1rem;
+  align-items: start;
 }
 
-.daygroup { grid-column: 1 / -1; }
+/* == Category index ======================================================= */
+.catindex {
+  position: sticky;
+  top: 6.5rem;
+  align-self: start;
+  padding-top: 2.5rem;
+}
 
-.daygroup__title {
-  padding: 0.25rem 0.25rem 0.5rem;
-  font-size: 0.75rem;
+.catindex__label {
+  margin-bottom: 1.25rem;
+  padding-left: 0.75rem;
+  color: var(--fg-muted);
+  font-size: 0.6875rem;
   line-height: 1.125rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: var(--fg-subtle);
 }
 
-.daygroup + .daygroup { margin-top: 1rem; }
-
-.panel {
-  position: relative;
+.catindex__nav {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  transition: box-shadow var(--duration-normal) var(--ease-default),
-              border-color var(--duration-normal) var(--ease-default);
+  gap: 0.125rem;
 }
 
-.panel:hover {
-  border-color: var(--border-muted);
-  box-shadow: var(--shadow-sm);
-}
-
-.panel__header {
+.catindex__row {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 0.875rem;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-subtle);
-  flex-shrink: 0;
+  display: block;
 }
 
-.panel__title {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.875rem;
+.catindex__link {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid transparent;
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
   line-height: 1.25rem;
+  transition: background var(--duration-fast) var(--ease-default),
+              color var(--duration-fast) var(--ease-default);
+}
+
+.catindex__link:hover { background: var(--bg-muted); color: var(--fg-default); }
+
+.catindex__link[aria-current] {
+  border-left-color: var(--accent-default);
+  background: var(--accent-3);
+  color: var(--accent-text);
   font-weight: 600;
-  letter-spacing: -0.01em;
+}
+
+.catindex__link--all { margin-bottom: 0.75rem; }
+
+.catindex__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.panel__sub {
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  line-height: 1.125rem;
-  color: var(--fg-muted);
+.catindex__count {
+  flex: none;
+  color: var(--fg-subtle);
+  font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
 
-/* Share of this panel's headlines that clear the high-signal bar. */
-.panel__meter {
+/* Pinning moved here from the cards: the index is where topic order is read,
+   so it is where topic order should be changed. */
+.catindex__pin {
   position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--jade-9);
-  opacity: 0.85;
-}
-
-/* Fade the last row when a list is scrollable and not yet at the bottom, so a
-   clipped headline reads as "more below" rather than as a rendering glitch. */
-.panel::after {
-  content: '';
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 2.5rem;
-  border-radius: 0 0 var(--radius-l3) var(--radius-l3);
-  background: linear-gradient(to bottom, transparent, var(--bg-default));
-  opacity: 0;
-  transition: opacity var(--duration-normal) var(--ease-default);
-  pointer-events: none;
-}
-
-.panel[data-more='true']::after { opacity: 1; }
-
-.panel__body {
-  max-height: 23rem;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--gray-7) transparent;
-}
-
-.panel__body::-webkit-scrollbar { width: 0.5rem; }
-.panel__body::-webkit-scrollbar-track { background: transparent; }
-.panel__body::-webkit-scrollbar-thumb {
-  background: var(--gray-6);
-  border-radius: var(--radius-full);
-  border: 2px solid var(--bg-default);
-}
-.panel__body::-webkit-scrollbar-thumb:hover { background: var(--gray-8); }
-
-/* == Editorial category cards ============================================ */
-.grid[data-view='categories'] {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.875rem;
-  align-items: stretch;
-}
-
-.grid[data-view='categories'] .panel {
-  height: 18.25rem;
-  border-color: color-mix(in srgb, var(--border-subtle) 78%, transparent);
-  border-radius: 0.5rem;
-  box-shadow: none;
-}
-
-.grid[data-view='categories'] .panel:hover {
-  border-color: var(--border-muted);
-  box-shadow: none;
-}
-
-.grid[data-view='categories'] .panel__header {
-  min-height: 4.5rem;
-  gap: 0.75rem;
-  padding: 0.75rem 0.875rem;
-  border-bottom-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  background: var(--bg-default);
-}
-
-.panel__icon {
+  right: -1.625rem;
+  top: 50%;
   display: grid;
   place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  flex: 0 0 2.5rem;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--bg-muted);
-  color: var(--fg-muted);
-}
-
-.panel__icon svg { width: 1.125rem; height: 1.125rem; }
-.panel__heading { display: flex; min-width: 0; flex-direction: column; gap: 0.125rem; }
-
-.panel__icon--green  { background: #e8f5ee; color: #187c59; }
-.panel__icon--violet { background: #f0eafd; color: #7546c9; }
-.panel__icon--blue   { background: #e7effb; color: #356fc5; }
-.panel__icon--teal   { background: #e4f4f0; color: #13806d; }
-.panel__icon--orange { background: #fdf0e8; color: #c35e32; }
-.panel__icon--amber  { background: #fff3d9; color: #b56a0a; }
-.panel__icon--red    { background: #fbe9e9; color: #c43f46; }
-.panel__icon--slate  { background: #edf0f2; color: #59636c; }
-
-.grid[data-view='categories'] .panel__title {
-  flex: 0 1 auto;
-  color: var(--fg-default);
-  font-size: 0.9375rem;
-  line-height: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.grid[data-view='categories'] .panel__sub {
-  font-size: 0.6875rem;
-  line-height: 1rem;
-}
-
-/* Pinning is an ordering preference, not a filter, so its control stays out of
-   the way: it appears on hover, or stays lit once the topic is pinned. */
-.panel__pin {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  margin-left: auto;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.375rem;
+  height: 1.375rem;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-l1);
   background: transparent;
   color: var(--fg-subtle);
-  cursor: pointer;
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-default),
-              background var(--duration-fast) var(--ease-default),
-              color var(--duration-fast) var(--ease-default);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: opacity var(--duration-normal) var(--ease-default);
 }
 
-.panel__pin svg { width: 0.9375rem; height: 0.9375rem; }
-.panel__pin:hover { background: var(--gray-a3); color: var(--fg-default); }
+.catindex__pin svg { width: 0.8125rem; height: 0.8125rem; }
+.catindex__pin:hover { background: var(--gray-a3); color: var(--fg-default); }
 
-.panel--category:hover .panel__pin,
-.panel__pin[aria-pressed='true'],
-.panel__pin:focus-visible { opacity: 1; }
+.catindex__row:hover .catindex__pin,
+.catindex__row--pinned .catindex__pin,
+.catindex__pin:focus-visible { opacity: 1; }
 
-.panel__pin[aria-pressed='true'] { color: var(--fg-default); }
+.catindex__row--pinned .catindex__pin { color: var(--fg-default); }
 
-.grid[data-view='categories'] .panel::after {
-  height: 1.75rem;
-  background: linear-gradient(to bottom, transparent,
-    color-mix(in srgb, var(--bg-default) 88%, transparent));
-}
-
-.grid[data-view='categories'] .panel[data-more='true']::after { opacity: 0.68; }
-
-.grid[data-view='categories'] .panel__body {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-}
-
-.grid[data-view='categories'] .panel:hover .panel__body,
-.grid[data-view='categories'] .panel__body:hover {
-  scrollbar-color: var(--border-muted) transparent;
-}
-
-.grid[data-view='categories'] .panel__body::-webkit-scrollbar { width: 0.3125rem; }
-.grid[data-view='categories'] .panel__body::-webkit-scrollbar-thumb {
-  border: 0;
-  background: transparent;
-}
-
-.grid[data-view='categories'] .panel:hover .panel__body::-webkit-scrollbar-thumb,
-.grid[data-view='categories'] .panel__body:hover::-webkit-scrollbar-thumb {
-  background: var(--border-muted);
-}
-
-.grid[data-view='categories'] .row + .row {
-  border-top-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
-}
-
-.grid[data-view='categories'] .row__line {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1.75rem 2.5rem minmax(0, 1fr);
-  align-items: start;
-  gap: 0.375rem;
-  min-height: 5.875rem;
-  padding: 0.8125rem 0.75rem;
-}
-
-.grid[data-view='categories'] .row:hover .row__line { background: var(--bg-subtle); }
-
-.grid[data-view='categories'] .row[data-selected='true'] {
-  box-shadow: inset 0.125rem 0 0 var(--fg-default);
-}
-
-.grid[data-view='categories'] .row[data-selected='true'] .row__line {
-  background: var(--bg-subtle);
-}
-
-.grid[data-view='categories'] .row__score {
-  grid-column: 1;
-  min-width: 0;
-  height: auto;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--fg-default);
-  font-size: 0.75rem;
-  line-height: 1.4375rem;
-  font-weight: 500;
-  text-align: left;
-}
-
-.grid[data-view='categories'] .row__score:hover {
-  color: var(--fg-muted);
-  text-decoration: underline;
-  transform: none;
-}
-
-.grid[data-view='categories'] .row__age {
-  grid-column: 2;
-  grid-row: 1;
-  min-width: 0;
-  padding-top: 0;
-  text-align: left;
-  font-size: 0.6875rem;
-  line-height: 1.4375rem;
-  color: var(--fg-subtle);
-}
-
-.grid[data-view='categories'] .row__link {
-  display: block;
-}
-
-.grid[data-view='categories'] .row__title {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--fg-default);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.grid[data-view='categories'] .row__link:hover .row__title { color: var(--fg-muted); }
-.grid[data-view='categories'] .row__main {
-  grid-column: 3;
-  grid-row: 1;
-  gap: 0.25rem;
-}
-
-/* The positional row entrance is useful in the continuous feed. In a short,
-   independently scrolling card it leaves the second visible story mid-fade. */
-.grid[data-view='categories'] .row__line { animation: none; }
-
-.grid[data-view='categories'] .row__meta { min-height: 1rem; }
-
-.grid[data-view='categories'] .chip--source {
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+.catindex__note {
+  margin: 1.875rem 0.75rem 0;
+  max-width: 11rem;
   color: var(--fg-subtle);
   font-size: 0.6875rem;
-  line-height: 1rem;
+  line-height: 1.45;
+}
+
+/* == Topic sections ======================================================= */
+.topic {
+  margin-bottom: 3.4375rem;
+  scroll-margin-top: 7.25rem;
+}
+
+.topic__head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding-bottom: 1.0625rem;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.topic__title {
+  color: var(--fg-default);
+  font-size: 2.125rem;
+  line-height: 1.2;
   font-weight: 400;
+  letter-spacing: -0.026em;
 }
 
-.grid[data-view='categories'] .chip--source:hover {
+.topic__count {
+  margin-left: auto;
+  flex: none;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.topic__pin {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-l1);
   background: transparent;
-  color: var(--fg-default);
-  text-decoration: underline;
+  color: var(--fg-subtle);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--duration-normal) var(--ease-default);
 }
 
-.grid[data-view='categories'] .row__icons {
-  position: absolute;
-  z-index: 2;
-  top: 0.375rem;
-  right: 0.375rem;
-  gap: 0;
-  padding: 0.125rem;
-  border-radius: 0.375rem;
-  background: transparent;
+.topic__pin svg { width: 0.875rem; height: 0.875rem; }
+.topic__pin:hover { background: var(--gray-a3); color: var(--fg-default); }
+
+.topic:hover .topic__pin,
+.topic__pin[aria-pressed='true'],
+.topic__pin:focus-visible { opacity: 1; }
+
+.topic__pin[aria-pressed='true'] { color: var(--fg-default); }
+
+.more {
+  margin-top: 1.0625rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.grid[data-view='categories'] .row:hover .row__icons,
-.grid[data-view='categories'] .row[data-selected='true'] .row__icons,
-.grid[data-view='categories'] .row[data-saved='true'] .row__icons {
-  background: color-mix(in srgb, var(--bg-default) 92%, transparent);
-}
+.more:hover { text-decoration: underline; }
 
-.grid[data-view='categories'] .row__icon { width: 1.5rem; height: 1.5rem; }
-.grid[data-view='categories'] .detail { padding-left: 0.75rem; }
-
-[data-theme='dark'] .panel__icon--green  { background: #17352b; color: #72c7a1; }
-[data-theme='dark'] .panel__icon--violet { background: #2d2540; color: #b9a2ec; }
-[data-theme='dark'] .panel__icon--blue   { background: #1c2d45; color: #8cb5ed; }
-[data-theme='dark'] .panel__icon--teal   { background: #173632; color: #72c9b7; }
-[data-theme='dark'] .panel__icon--orange { background: #3c271f; color: #e59b77; }
-[data-theme='dark'] .panel__icon--amber  { background: #3a2d16; color: #e5b85d; }
-[data-theme='dark'] .panel__icon--red    { background: #3c2023; color: #e4898e; }
-[data-theme='dark'] .panel__icon--slate  { background: #292d31; color: #aeb7bf; }
-
-[data-theme='dark'] .toolbar .segment__item[aria-checked='true'],
-[data-theme='dark'] .toolbar .btn[aria-pressed='true'] {
-  border-color: #e8e8e8;
-  background: #e8e8e8;
-  color: #171717;
-}
-
-/* Few, wide columns: a headline needs room to land on one or two lines, so the
-   card count per row stays low and each column carries the width instead. */
-@media (min-width: 44rem) {
-  .grid[data-view='categories'] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-@media (min-width: 68rem) {
-  .grid[data-view='categories'] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-
-@media (min-width: 104rem) {
-  .grid[data-view='categories'] { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-
-/* A source that fetched but matched nothing still gets a card, so a broken
-   selector cannot masquerade as a slow news day. */
-.panel--broken { border-color: var(--red-6); }
-
-.panel__broken {
+/* == Source board ========================================================= */
+.srccard {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.875rem;
-  font-size: 0.8125rem;
-  line-height: 1.25rem;
-  color: var(--fg-muted);
+  min-width: 0;
+  border-radius: var(--radius-l2);
+  box-shadow: none;
 }
 
-.panel__since { color: var(--fg-subtle); font-size: 0.75rem; }
+/* One line of title and the padding around it. The min-height holds the rule
+   at the same depth across a row of cards, which is all it was ever for; it
+   used to reserve room for a kicker line as well, and the kicker is now the
+   exception rather than the rule. */
+.srccard__head {
+  min-height: 3.5rem;
+  padding: 0.875rem 1.1875rem 0.8125rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Only a source in trouble draws this, under the title it qualifies. */
+.srccard__kicker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3125rem;
+  color: var(--fg-subtle);
+  font-size: 0.625rem;
+  line-height: 1rem;
+}
+
+
+.srccard__title {
+  color: var(--fg-default);
+  font-size: 1.4375rem;
+  line-height: 1.2;
+  font-weight: 400;
+  letter-spacing: -0.018em;
+}
+
+.srccard__list { padding-inline: 1.1875rem; }
+
+.srccard__foot {
+  margin-top: auto;
+  min-height: 2.4375rem;
+  display: flex;
+  align-items: center;
+  padding: 0.5625rem 1.1875rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.srccard__foot .more { margin-top: 0; font-size: 0.6875rem; }
+.srccard__all { color: var(--fg-subtle); font-size: 0.6875rem; }
+
+.srccard--broken { border-color: var(--red-6); }
+
+.srccard__broken {
+  padding: 0.8125rem 1.1875rem 0.9375rem;
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.srccard__since { margin-top: 0.375rem; color: var(--fg-subtle); font-size: 0.75rem; }
 
 .dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.4375rem;
+  height: 0.4375rem;
   flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--gray-8);
@@ -920,136 +868,174 @@ code {
 .dot--pending { background: var(--gray-8); }
 .dot--disabled { background: var(--gray-6); }
 
-/* == Rows ================================================================= */
+/* == Feed stream ==========================================================
+   A gutter that names the day, and stories beside it. The gutter is sticky so
+   the reader always knows which day they are inside of. */
+.daygroup {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: 1.625rem;
+  padding-top: 1rem;
+}
+
+.daygroup + .daygroup {
+  margin-top: 1.5rem;
+  padding-top: 1.375rem;
+  border-top: 1px solid var(--border-default);
+}
+
+.daygroup__label {
+  position: sticky;
+  top: 6.75rem;
+  align-self: start;
+  padding-top: 0.875rem;
+}
+
+.daygroup__title {
+  color: var(--fg-default);
+  font-size: 0.75rem;
+  line-height: 1.125rem;
+  font-weight: 600;
+}
+
+.daygroup__sub {
+  margin-top: 0.25rem;
+  color: var(--fg-muted);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+.daygroup__list { min-width: 0; }
+
+.streamend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-left: 8.625rem;
+  padding-top: 1.5rem;
+}
+
+.streamend__count {
+  color: var(--fg-muted);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* == Rows =================================================================
+   The same row everywhere: a headline at one size, one line of metadata under
+   it, and the controls held to the right where they cannot interrupt either. */
 .row + .row { border-top: 1px solid var(--border-subtle); }
 
 .row__line {
   display: flex;
   align-items: flex-start;
-  gap: 0.625rem;
-  padding: 0.625rem 0.875rem;
-  transition: background var(--duration-fast) var(--ease-default);
+  gap: 0.75rem;
+  padding-block: 1.3125rem 1.25rem;
 }
 
-.row:hover .row__line { background: var(--bg-subtle); }
-
-/* Rows resolve as they enter the scrollport. This runs on a view() timeline
-   rather than an observer, which makes the state positional: a row already on
-   screen renders settled, so filtering and polling never replay the entrance
-   for headlines that were already sitting there. Applied to the line, not the
-   row, so the separator borders stay put while the content moves. */
-@supports (animation-timeline: view()) {
-  .row__line {
-    animation: row-in linear both;
-    animation-timeline: view();
-    animation-range: entry 0% entry 70%;
-  }
-
-  /* Partial fade, per the entrance rule below: it moves, it does not arrive
-     out of nothing. */
-  @keyframes row-in {
-    from { opacity: 0.4; transform: translateY(0.375rem); }
-    to   { opacity: 1; transform: none; }
-  }
+.row__pos {
+  flex: none;
+  width: 1.5rem;
+  padding-top: 0.3125rem;
+  color: var(--fg-subtle);
+  font-size: 0.625rem;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Keyboard selection needs to be unmistakable without moving anything. */
-.row[data-selected='true'] { box-shadow: inset 0.1875rem 0 0 var(--accent-default); }
-.row[data-selected='true'] .row__line { background: var(--accent-a2); }
-
-/* Read headlines recede rather than disappear -- the list stays stable, the
-   eye just stops landing on them. */
-.row[data-read='true'] .row__title { color: var(--fg-subtle); font-weight: 400; }
-.row[data-read='true'] .row__score { opacity: 0.5; }
-
-.row__score {
-  margin-top: 0.09375rem;
-  flex-shrink: 0;
-  /* Wide enough for a three-digit score set in Plex Mono, so the headline
-     column starts at the same x on every row whatever the number. */
-  min-width: 2.5rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: transform var(--duration-fast) var(--ease-default);
-}
-
-.row__score:hover { transform: scale(1.06); }
-
-.row__link { flex: 1; min-width: 0; display: block; }
+.row__body { flex: 1; min-width: 0; }
+.row__link { display: block; }
 
 .row__title {
   display: block;
-  min-width: 0;
-  font-size: 1rem;
-  line-height: 1.4375rem;
-  font-weight: 500;
+  max-width: 46rem;
   color: var(--fg-default);
+  font-size: 1.125rem;
+  line-height: 1.5;
+  font-weight: 500;
+  letter-spacing: -0.014em;
+  transition: color var(--duration-fast) var(--ease-default);
 }
 
 .row__link:hover .row__title { color: var(--accent-text); }
 
-/* Stacked variant: the title keeps the full column width and its context sits
-   on a second line. Used by the category panels, where a chip beside the title
-   would leave it too narrow to scan. */
-.row__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
+.row__title mark {
+  padding: 0 0.0625rem;
+  border-radius: 0.125rem;
+  background: color-mix(in srgb, var(--amber-3) 75%, transparent);
+  color: inherit;
 }
 
 .row__meta {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  max-width: 100%;
-}
-
-.row__tags {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  flex-shrink: 0;
-  max-width: 45%;
-}
-
-.row__age {
-  flex-shrink: 0;
-  min-width: 2.5rem;
-  text-align: right;
-  font-size: 0.6875rem;
-  line-height: 1.25rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
   color: var(--fg-muted);
-  cursor: help;
+  font-size: 0.6875rem;
+  line-height: 1rem;
 }
 
-/* An age we inferred from when we first saw the headline is not a publish
-   date, and must not look like one. */
-.row__age--est { color: var(--fg-subtle); font-style: italic; }
+.row__meta:empty { display: none; }
+.row__dot { padding-inline: 0.5rem; color: var(--gray-8); }
 
-.row__icons {
+.row__source,
+.row__topic {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.row__topic { color: var(--accent-text); }
+.row__source:hover,
+.row__topic:hover { color: var(--accent-text); text-decoration: underline; }
+
+.row__age--est { font-style: italic; color: var(--fg-subtle); }
+
+.row__tools {
   display: flex;
   align-items: center;
   gap: 0.125rem;
-  flex-shrink: 0;
+  flex: none;
+  padding-top: 0.125rem;
 }
 
-.row__icon {
-  display: grid;
-  place-items: center;
-  width: 1.625rem;
-  height: 1.625rem;
+/* The score kept its meaning and lost its badge. It is the quietest thing on
+   the line, and it is still the door to its own arithmetic. */
+.row__score {
+  min-width: 1.75rem;
+  padding: 0.1875rem 0.3125rem;
   border: 0;
   border-radius: var(--radius-l1);
   background: transparent;
   color: var(--fg-subtle);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
+}
+
+.row__score:hover,
+.row__score[aria-expanded='true'] { background: var(--gray-a3); color: var(--fg-default); }
+
+.row__icon {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-l1);
+  background: transparent;
+  color: var(--fg-subtle);
   opacity: 0;
-  transition: opacity var(--duration-fast) var(--ease-default),
-              background var(--duration-fast) var(--ease-default),
-              color var(--duration-fast) var(--ease-default);
+  cursor: pointer;
+  transition: opacity var(--duration-normal) var(--ease-default),
+              background var(--duration-fast) var(--ease-default);
 }
 
 .row__icon svg { width: 0.9375rem; height: 0.9375rem; }
@@ -1059,77 +1045,60 @@ code {
 .row[data-selected='true'] .row__icon,
 .row__icon:focus-visible { opacity: 1; }
 
-/* A saved headline keeps its bookmark visible; that is the point of saving. */
 .row[data-saved='true'] .row__icon[data-act='save'] {
   opacity: 1;
   color: var(--accent-text);
 }
 
-.chip {
-  padding: 0.0625rem 0.4375rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: var(--bg-subtle);
-  color: var(--fg-muted);
-  font-size: 0.6875rem;
-  line-height: 1.125rem;
-  white-space: nowrap;
+.row[data-read='true'] .row__title { color: var(--fg-subtle); font-weight: 400; }
+.row[data-selected='true'] { box-shadow: inset 0.125rem 0 0 var(--accent-default); }
+.row[data-selected='true'] .row__line { padding-left: 0.75rem; }
+
+.row--feed .row__title { font-size: 1.0625rem; }
+
+/* A source card is a column, not a page: the headline clamps, and the controls
+   sit over the metadata line rather than stealing width from the title. */
+.row--source .row__line {
+  position: relative;
+  display: block;
+  padding-block: 0.75rem;
+}
+
+.row--source .row__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
 }
 
-.chip--action { cursor: pointer; font-family: inherit; }
-.chip--action:hover {
-  border-color: var(--accent-7);
-  background: var(--accent-3);
-  color: var(--accent-text);
+.row--source .row__link:focus-visible .row__title { display: block; }
+.row--source .row__meta { font-size: 0.625rem; }
+
+.row--source .row__tools {
+  position: absolute;
+  right: 0;
+  bottom: 0.6875rem;
+  padding-left: 1.25rem;
+  background: linear-gradient(90deg, transparent, var(--bg-default) 1.25rem);
 }
 
-.chip--source { color: var(--fg-default); font-weight: 500; }
-
-.chip--category {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--accent-default) 12%, transparent);
-  color: var(--accent-text);
-}
-
-/* "+2": this story also came in from two other sources. */
-.chip--also {
-  border-color: var(--jade-6);
-  background: var(--jade-3);
-  color: var(--jade-11);
-  font-variant-numeric: tabular-nums;
-  cursor: help;
-}
-
-/* One headline per line: the title takes the slack and truncates rather than
-   wrapping, so the stream scans as a single column of rows. */
-.row--feed .row__line { align-items: center; padding-block: 0.5rem; }
-
-.row--feed .row__title {
-  line-height: 1.375rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row--feed .row__score { margin-top: 0; }
-
-mark {
-  background: color-mix(in srgb, var(--amber-9) 45%, transparent);
-  color: inherit;
-  border-radius: 0.125rem;
-}
+.row--source .row__icon { width: 1.5rem; height: 1.5rem; }
+.row--source[data-selected='true'] .row__line { padding-left: 0.5rem; }
 
 /* == Expanded row detail ==================================================
    Details expand in place rather than in a drawer: the reader keeps their
    position in the list, and keyboard navigation never has to change context. */
 .detail {
-  padding: 0 0.875rem 0.875rem 3.625rem;
+  padding: 0 0 1.125rem;
   border-top: 1px dashed var(--border-subtle);
   animation: detail-in var(--duration-normal) var(--ease-default);
 }
+
+.row--feed .detail { padding-left: 2.25rem; }
+.row--source .detail { padding-inline: 0; }
 
 /* Entrance animations move, they do not fade in from nothing: an animation
    that stalls (throttled tab, reduced-motion shim, headless render) must still
@@ -1282,9 +1251,9 @@ mark {
 
 .skeleton-row {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.625rem;
-  padding: 0.75rem 0.875rem;
+  padding-block: 1.3125rem 1.25rem;
 }
 
 .skeleton-row + .skeleton-row { border-top: 1px solid var(--border-subtle); }
@@ -1383,6 +1352,21 @@ mark {
 }
 
 /* == Source rows ========================================================== */
+.ownerbar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr);
+  align-items: end;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ownerbar__field { min-width: 0; }
+
+@media (max-width: 34rem) {
+  .ownerbar { grid-template-columns: minmax(0, 1fr); }
+}
+
 .sourcelist { display: flex; flex-direction: column; }
 
 .srow {
@@ -1731,7 +1715,7 @@ kbd {
 /* == Footer =============================================================== */
 .sitefooter {
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg-default);
+  background: var(--bg-canvas);
 }
 
 .sitefooter__inner {
@@ -1748,69 +1732,98 @@ kbd {
 .sitefooter .pulse { width: 0.375rem; height: 0.375rem; }
 .sitefooter__sep { color: var(--fg-subtle); }
 
-/* == Responsive =========================================================== */
-@media (max-width: 90rem) {
-  .brand__tagline { display: none; }
+/* == Responsive ===========================================================
+   Two real breaks. At 60rem the category index stops being a column and becomes
+   the jump bar in the header; at 46rem the app bar stacks and the feed loses
+   its day gutter. Everything else is the same page at a different size. */
+@media (max-width: 72rem) {
+  .shell { padding-inline: 1.75rem; }
+  .jumpbar { padding-inline: 1.75rem; }
+  .reading[data-index='on'] { gap: 3rem; }
+  .brand { gap: 1.75rem; }
+  .appbar__inner { gap: 1.5rem; }
+  .search { max-width: 15rem; }
 }
 
-@media (max-width: 76rem) {
+@media (max-width: 60rem) {
+  .reading[data-index='on'] { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .catindex { display: none; }
+  .jumpbar { display: flex; }
+  .topic { scroll-margin-top: 9.75rem; }
+  .catindex__pin { display: none; }
+  .newpill { top: 8.5rem; }
+  .daygroup__label { top: 9.5rem; }
+}
+
+@media (max-width: 46rem) {
+  .shell { padding-inline: 1.25rem; }
+  .jumpbar { padding-inline: 1.25rem; }
+
   .appbar__inner {
-    grid-template-columns: minmax(0, 1fr) auto;
     height: auto;
-    padding-block: 0.625rem;
+    flex-wrap: wrap;
+    gap: 0.75rem 0.875rem;
+    padding-block: 0.875rem;
   }
 
-  .search {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    max-width: none;
-  }
-
-  .pagehead {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  .toolbar { justify-content: flex-start; }
-}
-
-@media (max-width: 48rem) {
-  .row--feed .chip--category { display: none; }
-  .row__tags { max-width: 40%; }
-  .shell { padding-inline: 1rem; }
+  /* Three rows: masthead and errands, then the views, then search. `contents`
+     dissolves the brand wrapper so all three can be ordered as siblings. */
+  .brand { display: contents; }
+  .brand__name { order: 1; font-size: 1.5625rem; }
+  .appbar__actions { order: 2; margin-left: auto; }
+  .viewnav { order: 3; width: 100%; justify-content: space-between; gap: 0.5rem; }
+  .viewnav__item { font-size: 0.8125rem; }
+  .search { order: 4; max-width: none; margin-left: 0; }
   .search__kbd { display: none; }
-  .pagehead { padding-block: 1.375rem 1rem; }
-  .pagehead__title { font-size: 2rem; }
-  .toolbar { gap: 0.5rem; }
-  .toolbar .segment__item { padding-inline: 0.6875rem; }
-  .toasts { right: 1rem; left: 1rem; bottom: 1rem; }
-  .detail { padding-left: 0.875rem; }
-  .bd__row { grid-template-columns: minmax(0, 1fr) 3rem 2.5rem; }
-  .newpill { top: 7.5rem; }
+  .appbar__actions .pill { width: 2.125rem; padding: 0; }
+  .appbar__actions .pill span { display: none; }
+
+  .viewhead { padding-top: 0.875rem; }
+  .tabs { gap: 1.125rem; }
+
+  /* The label is the first thing to go: "All / 60+ / 75+" beside an unread
+     toggle reads well enough without it once the row is tight. */
+  .viewtools { gap: 0.5rem; }
+  .viewtools__label { display: none; }
+  .grid { padding-block: 1.5rem 3.5rem; }
+  .grid[data-view='feed'] { padding-top: 1rem; }
+
+  /* The day label stops being a gutter and becomes a line above the stories. */
+  .daygroup { display: block; padding-top: 1.1875rem; }
+  .daygroup__label {
+    position: static;
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0 0 0.5rem;
+  }
+  .daygroup__sub { margin-top: 0; }
+  .streamend { margin-left: 0; align-items: flex-start; }
+
+  .topic { margin-bottom: 2.625rem; scroll-margin-top: 12.5rem; }
+  .topic__title { font-size: 1.8125rem; }
+
+  .row__title { font-size: 1.0625rem; }
+  .row__pos { width: 1.125rem; font-size: 0.5625rem; }
+  .row__line { gap: 0.5rem; }
+  .row__score { min-width: 1.5rem; padding-inline: 0.1875rem; }
+  .row__icon { width: 1.5rem; height: 1.5rem; }
   /* Touch has no hover, so row actions cannot hide behind it. */
   .row__icon { opacity: 1; }
-  .panel__pin { opacity: 1; }
-  .grid[data-view='categories'] .row__main { padding-right: 3.25rem; }
-}
+  .topic__pin { opacity: 1; }
+  .row--source .row__tools { position: static; padding-left: 0; background: none; }
+  .row--source .row__line { display: flex; }
 
-@media (max-width: 40rem) {
-  .appbar__inner { gap: 0.75rem; }
-  .brand__name { font-size: 1.75rem; }
-  .appbar__actions .pill {
-    width: 2.25rem;
-    height: 2.25rem;
-    padding: 0;
-  }
-  .appbar__actions .pill span { display: none; }
-  .grid[data-view='categories'] .panel { height: 20rem; }
+  .toasts { right: 1rem; left: 1rem; bottom: 1rem; }
+  .bd__row { grid-template-columns: minmax(0, 1fr) 3rem 2.5rem; }
+  .newpill { top: 13.5rem; }
+  .menu__list { width: 15rem; }
 }
 
 @media (max-width: 30rem) {
-  .row--feed .row__tags { display: none; }
   .keys__row { grid-template-columns: 5.5rem minmax(0, 1fr); }
-  .toolbar > .btn,
-  .toolbar > .menu > .btn { padding-inline: 0.625rem; }
+  .viewnav { gap: 0.75rem; }
+  .grid[data-view='sources'] { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* == Theme wipe =========================================================== */
@@ -1845,11 +1858,9 @@ html[data-theme-switching]::view-transition-new(root) {
     transition-duration: 0.01ms !important;
   }
 
-  /* A scroll-driven animation takes its progress from the timeline, not from
-     animation-duration, so the override above never reaches it -- and clearing
-     the timeline alone would strand the row in the before-phase fill at 0.4.
-     The entrance has to come off entirely. */
-  .row__line { animation: none !important; }
+  /* Anchor jumps from the category index are the one motion the rules above do
+     not reach, because scrollIntoView takes its behaviour from the call site. */
+  html { scroll-behavior: auto; }
 }
 
 @keyframes spin {

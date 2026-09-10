@@ -1,0 +1,39 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "high-signal-dashboard",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-09-10",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/feed.xml"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "high-signal-preview",
+      "database_id": "replace-with-preview-database-id",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "preview": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "high-signal-preview",
+          "database_id": "3b33be5d-bfa7-4f67-a3fb-afcab5659e2b",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "vars": {
+        "GITHUB_REPOSITORY": "kriai/high-signal-dashboard",
+        "GITHUB_WORKFLOW_REF": "main"
+      }
+    }
+  },
+  "observability": {
+    "enabled": true
+  }
+}

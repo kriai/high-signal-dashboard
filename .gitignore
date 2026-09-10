@@ -8,8 +8,14 @@ cache.json
 cache.json.tmp
 health.json
 health.json.tmp
+summaries.json
+summaries.json.tmp
 
 .DS_Store
 .gstack/
 .vercel
 .env*.local
+.dev.vars
+dist/
+node_modules/
+.wrangler/

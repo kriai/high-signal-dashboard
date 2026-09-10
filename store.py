@@ -1,26 +1,20 @@
-"""Where scrape state lives.
+"""Legacy local/Blob JSON storage during the Cloudflare transition.
 
-Locally that is three JSON files next to the code, which is what every other
-module still thinks it is talking to. On Vercel it cannot be: the function
-filesystem is read-only apart from `/tmp`, and `/tmp` is per-instance and
-disposable, so a scrape written by the cron invocation would be invisible to
-the instance serving the dashboard a second later.
+Reads use known URLs, never the billable listing API. Only missing files return
+None; unavailable storage and invalid JSON are errors, so callers can preserve
+the last successful snapshot instead of replacing it with an empty feed.
 
-So the same three documents move into a Vercel Blob store, keyed by the same
-names. `BLOB_READ_WRITE_TOKEN` decides which backend is live -- Vercel injects
-it when a Blob store is linked to the project, and it is absent on a laptop, so
-local development keeps its plain files with no configuration.
-
-The Blob calls here are the raw REST API rather than a client library, because
-Vercel ships no Python SDK for Blob. The shapes below are what the platform
-actually accepts today (`x-api-version: 10`); if uploads ever start failing
-with a version error, that header is the thing to bump.
+`STATE_BACKEND` is now explicit for new deployments. The old token-based
+selection remains only as a compatibility default until the Vercel path is
+removed. D1 deliberately is not made to look like a JSON-file backend: the
+scheduled publisher uses d1_store.py and the hosted Worker uses a D1 binding.
 """
 
 import json
 import os
-import threading
+import re
 import time
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -31,9 +25,20 @@ BLOB_API_VERSION = '10'
 # ever added to it.
 PREFIX = 'high-signal/'
 
-# The public blob URL is CDN-backed. Reads bust that cache with the blob's own
-# uploadedAt, so the only staleness window is how long we reuse the listing.
-INDEX_TTL = 15
+class StoreUnavailable(RuntimeError):
+    """State could not be read or published. Safe to show without credentials."""
+
+
+class D1StoreBoundary:
+    """Prevent deployment-specific D1 behavior leaking through file helpers."""
+
+    def read(self, name):
+        raise StoreUnavailable(
+            f'{name} cannot be read through the legacy store in D1 mode')
+
+    def write(self, name, text):
+        raise StoreUnavailable(
+            f'{name} cannot be written through the legacy store in D1 mode')
 
 
 class LocalStore:
@@ -54,13 +59,26 @@ class LocalStore:
 
 
 class BlobStore:
-    """The three documents as blobs at a stable pathname."""
+    """Public blobs with stable filenames; GETs never require LIST or HEAD."""
 
-    def __init__(self, token):
+    def __init__(self, token, base_url=None):
         self.token = token
-        self._index = {}
-        self._indexed_at = 0
-        self._lock = threading.Lock()
+        if not base_url:
+            # The store ID is the public component of a Vercel read/write token.
+            # An explicit URL supports future token formats without a listing.
+            match = re.match(r'^vercel_blob_rw_([A-Za-z0-9]+)_', token)
+            if not match:
+                raise StoreUnavailable('Set BLOB_PUBLIC_BASE_URL for this token format')
+            base_url = f'https://{match[1].lower()}.public.blob.vercel-storage.com'
+        parsed = urlparse(base_url)
+        if (parsed.scheme != 'https' or not parsed.hostname or
+                not parsed.hostname.endswith('.public.blob.vercel-storage.com') or
+                parsed.username or parsed.password or parsed.port or
+                parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+            raise StoreUnavailable('BLOB_PUBLIC_BASE_URL must be a public Blob store origin')
+        self.base_url = base_url.rstrip('/')
+        self.operations = {'reads': 0, 'writes': 0}
+        self.fresh_reads = False
 
     def _headers(self, **extra):
         headers = {'authorization': f'Bearer {self.token}',
@@ -68,74 +86,65 @@ class BlobStore:
         headers.update(extra)
         return headers
 
-    def _listing(self, force=False):
-        """pathname -> (url, uploadedAt), cached briefly.
-
-        Every read would otherwise cost a listing call on top of the download.
-        """
-        with self._lock:
-            fresh = time.time() - self._indexed_at < INDEX_TTL
-            if self._index and fresh and not force:
-                return self._index
-
-            response = requests.get(BLOB_API, headers=self._headers(),
-                                    params={'prefix': PREFIX, 'limit': '1000'},
-                                    timeout=15)
-            response.raise_for_status()
-            self._index = {
-                blob['pathname']: (blob['url'], blob.get('uploadedAt', ''))
-                for blob in response.json().get('blobs', [])
-            }
-            self._indexed_at = time.time()
-            return self._index
-
     def read(self, name):
+        self.operations['reads'] += 1
         try:
-            entry = self._listing().get(PREFIX + name)
-            if not entry:
-                # A cold store, or a blob written by another instance since we
-                # last listed. One forced re-list tells the difference.
-                entry = self._listing(force=True).get(PREFIX + name)
-            if not entry:
+            # A stable URL lets the CDN share its cache across server instances.
+            # Overwrites can take about a minute to propagate.
+            options = {'timeout': 20}
+            if self.fresh_reads:
+                # Only the serialized CI writer bypasses CDN caching, so a
+                # just-finished run cannot be missed by a manual dispatch.
+                options['params'] = {'v': str(time.time_ns())}
+            response = requests.get(
+                f'{self.base_url}/{PREFIX}{quote(name, safe="")}', **options)
+            if response.status_code == 404:
                 return None
-            url, stamp = entry
-            response = requests.get(url, params={'v': stamp}, timeout=20)
             response.raise_for_status()
             return response.text
-        except (requests.RequestException, ValueError, KeyError) as exc:
-            print(f'⚠️  Blob read failed for {name}: {exc}')
-            return None
+        except requests.RequestException as exc:
+            status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            detail = f'HTTP {status}' if status else 'network error'
+            raise StoreUnavailable(f'Cannot read {name}: {detail}') from exc
 
     def write(self, name, text):
-        response = requests.put(
-            BLOB_API,
-            params={'pathname': PREFIX + name},
-            headers=self._headers(**{
-                'access': 'public',
-                'x-content-type': 'application/json',
-                # Overwriting a fixed pathname is the whole point; without this
-                # the API rejects the second write of the same name.
-                'x-allow-overwrite': '1',
-                # Short, because this content changes every scrape.
-                'x-cache-control-max-age': '60',
-            }),
-            data=text.encode('utf-8'),
-            timeout=30,
-        )
-        response.raise_for_status()
-        with self._lock:
-            # Point subsequent reads at what we just wrote instead of waiting
-            # out the listing TTL.
-            body = response.json()
-            self._index[PREFIX + name] = (body['url'], str(time.time()))
-        return body
+        self.operations['writes'] += 1
+        try:
+            response = requests.put(
+                BLOB_API,
+                params={'pathname': PREFIX + name},
+                headers=self._headers(**{
+                    'access': 'public',
+                    'x-content-type': 'application/json',
+                    'x-add-random-suffix': '0',
+                    'x-allow-overwrite': '1',
+                    'x-cache-control-max-age': '60',
+                }),
+                data=text.encode('utf-8'),
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as exc:
+            status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            detail = f'HTTP {status}' if status else 'network or response error'
+            raise StoreUnavailable(f'Cannot publish {name}: {detail}') from exc
 
 
 def _build():
+    configured = os.environ.get('STATE_BACKEND', '').strip().lower()
+    if configured and configured not in ('local', 'blob', 'd1'):
+        raise StoreUnavailable('STATE_BACKEND must be local, blob, or d1')
+    if configured == 'd1':
+        print('🗄️  State backend: Cloudflare D1')
+        return D1StoreBoundary()
+
     token = os.environ.get('BLOB_READ_WRITE_TOKEN')
-    if token:
+    if configured == 'blob' or (not configured and token):
+        if not token:
+            raise StoreUnavailable('BLOB_READ_WRITE_TOKEN is required for STATE_BACKEND=blob')
         print('🗄️  State backend: Vercel Blob')
-        return BlobStore(token)
+        return BlobStore(token, os.environ.get('BLOB_PUBLIC_BASE_URL'))
     return LocalStore()
 
 
@@ -149,8 +158,7 @@ def read_json(name, default=None):
     try:
         return json.loads(text)
     except ValueError:
-        print(f'⚠️  {name} is not valid JSON; ignoring it')
-        return default
+        raise StoreUnavailable(f'{name} is not valid JSON')
 
 
 def read_json_seeded(name, default=None):
@@ -177,3 +185,11 @@ def write_json(name, payload):
 
 def is_remote():
     return isinstance(store, BlobStore)
+
+
+def backend_name():
+    if isinstance(store, D1StoreBoundary):
+        return 'd1'
+    if isinstance(store, BlobStore):
+        return 'blob'
+    return 'local'
