@@ -359,15 +359,13 @@ function validateSourceToolPayload(kind: string, value: unknown): Record<string,
   }
   const payload = value as Record<string, unknown>;
   if (kind === 'discover') {
-    const url = validatePublicUrl(payload.url, 'URL');
-    return { name: cleanString(payload.name, 80) || 'Preview', url,
-      category: cleanString(payload.category, 80) || 'Other',
-      tier: validateTier(payload.tier) };
+    return validateSource({ ...payload,
+      name: cleanString(payload.name, 80) || 'Preview' });
   }
   return validateSource({ ...payload, name: cleanString(payload.name, 80) || 'Preview' });
 }
 
-function validateSource(value: unknown): Record<string, unknown> & { name: string } {
+export function validateSource(value: unknown): Record<string, unknown> & { name: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new RequestError(400, 'A source configuration is required');
   }
@@ -386,7 +384,11 @@ function validateSource(value: unknown): Record<string, unknown> & { name: strin
     type,
     limit: input.limit == null || input.limit === '' ? 15
       : positiveInteger(input.limit, 'Limit must be a number', 50),
+    retries: input.retries == null || input.retries === '' ? 3
+      : positiveInteger(input.retries, 'Retries must be a number', 3),
+    retention_hours: boundedInteger(input.retention_hours, 'Retention hours', 72, 0, 168),
     enabled: booleanValue(input.enabled, 'enabled', true),
+    allow_empty: booleanValue(input.allow_empty, 'allow_empty', false),
   };
   if (input.lock_category != null) {
     source.lock_category = booleanValue(input.lock_category, 'lock_category', false);
@@ -398,7 +400,65 @@ function validateSource(value: unknown): Record<string, unknown> & { name: strin
     const fallback = cleanString(input.fallback, 500);
     if (fallback) source.fallback = fallback;
   }
+  const allowedHosts = stringList(input.allowed_hosts, 'allowed_hosts', 12);
+  const pathPrefixes = stringList(input.path_prefixes, 'path_prefixes', 12);
+  if (allowedHosts.length) source.allowed_hosts = allowedHosts;
+  if (pathPrefixes.length) source.path_prefixes = pathPrefixes;
+  if (input.fetch_strategies != null) {
+    if (!Array.isArray(input.fetch_strategies) || input.fetch_strategies.length < 1 ||
+        input.fetch_strategies.length > 4) {
+      throw new RequestError(400, 'fetch_strategies must contain 1 to 4 strategies');
+    }
+    const ids = new Set<string>();
+    source.fetch_strategies = input.fetch_strategies.map((raw, index) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new RequestError(400, 'Each fetch strategy must be an object');
+      }
+      const item = raw as Record<string, unknown>;
+      const strategyType = cleanString(item.type, 12).toLowerCase() || 'static';
+      if (!['static', 'rss', 'json'].includes(strategyType)) {
+        throw new RequestError(400, 'Strategy type must be static, rss or json');
+      }
+      const id = cleanString(item.id, 50) || `strategy-${index + 1}`;
+      if (ids.has(id.toLowerCase())) {
+        throw new RequestError(400, 'Fetch strategy ids must be unique');
+      }
+      ids.add(id.toLowerCase());
+      const strategy: Record<string, unknown> = {
+        id, type: strategyType,
+        url: validatePublicUrl(item.url || source.url, 'Strategy URL'),
+      };
+      if (strategyType === 'static') {
+        const selectors = stringList(item.selectors, 'Strategy selectors', 20);
+        strategy.selectors = selectors.length
+          ? selectors : [cleanString(item.selector, 500) || 'h2 a, h3 a'];
+      }
+      return strategy;
+    });
+  }
   return source;
+}
+
+function boundedInteger(value: unknown, label: string, fallback: number,
+                        minimum: number, maximum: number): number {
+  if (value == null || value === '') return fallback;
+  const result = Number(value);
+  if (!Number.isInteger(result) || result < minimum || result > maximum) {
+    throw new RequestError(400, `${label} must be between ${minimum} and ${maximum}`);
+  }
+  return result;
+}
+
+function stringList(value: unknown, label: string, maximum: number): string[] {
+  if (value == null || value === '') return [];
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new RequestError(400, `${label} must be a list of at most ${maximum} strings`);
+  }
+  return value.map((item) => {
+    const text = cleanString(item, 500);
+    if (!text) throw new RequestError(400, `${label} contains an invalid value`);
+    return text;
+  });
 }
 
 function validateTier(value: unknown): string {
@@ -413,7 +473,8 @@ export function validatePublicUrl(value: unknown, label: string): string {
   const text = cleanString(value, 2048);
   let url: URL;
   try { url = new URL(text); } catch { throw new RequestError(400, `${label} is invalid`); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
+      (url.port && url.port !== '80' && url.port !== '443')) {
     throw new RequestError(400, `${label} must be a public HTTP URL`);
   }
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');

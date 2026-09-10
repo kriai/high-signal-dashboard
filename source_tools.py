@@ -1,6 +1,5 @@
 """Source validation, discovery and selector tests without Flask dependencies."""
 
-import ipaddress
 import random
 import re
 from urllib.parse import urljoin, urlparse
@@ -8,11 +7,11 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from scraper import is_challenge_page
+from source_config import (EDITABLE_FIELDS, SourceConfigError,
+                           is_public_url as config_is_public_url,
+                           normalize_source)
 
 
-EDITABLE_FIELDS = ('url', 'category', 'selector', 'fallback', 'tier', 'limit',
-                   'enabled', 'lock_category', 'type', 'feed_url')
-BLOCKED_HOSTS = ('localhost', 'localhost.localdomain', 'metadata.google.internal')
 COMMON_HEADLINE_SELECTORS = (
     'article h1 a', 'article h2 a', 'article h3 a',
     'main h1 a', 'main h2 a', 'main h3 a',
@@ -35,77 +34,14 @@ class SourceToolError(RuntimeError):
 
 
 def is_public_url(url):
-    host = (urlparse(url).hostname or '').lower().rstrip('.')
-    if not host or host in BLOCKED_HOSTS or host.endswith('.local'):
-        return False
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return True
-    return not (address.is_private or address.is_loopback or
-                address.is_link_local or address.is_reserved or
-                address.is_multicast)
+    return config_is_public_url(url)
 
 
 def clean_source(payload, existing=None):
-    source = dict(existing or {})
-    name = str(payload.get('name') or source.get('name') or '').strip()
-    if not name:
-        raise SourceToolError('A name is required')
-    if len(name) > 80:
-        raise SourceToolError('Name is too long')
-    source['name'] = name
-
-    for field in EDITABLE_FIELDS:
-        if field not in payload:
-            continue
-        value = payload[field]
-        if field in ('enabled', 'lock_category'):
-            if not isinstance(value, bool):
-                raise SourceToolError(f'{field} must be true or false')
-            source[field] = value
-        elif field == 'limit':
-            try:
-                source['limit'] = max(1, min(50, int(value)))
-            except (TypeError, ValueError) as exc:
-                raise SourceToolError('Limit must be a number') from exc
-        elif field == 'tier':
-            tier = str(value).lower().strip()
-            if tier not in ('high', 'medium', 'low', ''):
-                raise SourceToolError('Tier must be high, medium or low')
-            source['tier'] = tier or 'low'
-        elif field == 'type':
-            source_type = str(value or 'static').lower().strip()
-            if source_type not in ('static', 'rss', 'json'):
-                raise SourceToolError('Type must be static, rss or json')
-            source['type'] = source_type
-        else:
-            source[field] = str(value or '').strip()
-
-    url = source.get('url', '')
-    if not url.startswith(('http://', 'https://')):
-        raise SourceToolError('URL must start with http:// or https://')
-    if not is_public_url(url):
-        raise SourceToolError('That URL points at a local or private address')
-
-    source['type'] = (source.get('type') or 'static').lower()
-    feed_url = (source.get('feed_url') or '').strip()
-    if feed_url:
-        if not feed_url.startswith(('http://', 'https://')):
-            raise SourceToolError('Feed URL must start with http:// or https://')
-        if not is_public_url(feed_url):
-            raise SourceToolError('Feed URL points at a local or private address')
-        source['feed_url'] = feed_url
-    else:
-        source.pop('feed_url', None)
-
-    if source['type'] == 'static':
-        source.setdefault('selector', 'h2 a, h3 a')
-    else:
-        source.pop('selector', None)
-        source.pop('fallback', None)
-    source.setdefault('enabled', True)
-    return source
+    try:
+        return normalize_source(payload, existing, strict_selectors=True)
+    except SourceConfigError as exc:
+        raise SourceToolError(str(exc)) from exc
 
 
 def discover_source(scraper, payload):
@@ -116,15 +52,37 @@ def discover_source(scraper, payload):
         raise SourceToolError('URL must start with http:// or https://')
     if not is_public_url(url):
         raise SourceToolError('That URL points at a local or private address')
+
+    explicit_feed = str(payload.get('feed_url') or '').strip()
+    if explicit_feed or str(payload.get('type') or '').lower() == 'rss':
+        explicit_feed = explicit_feed or url
+        if not is_public_url(explicit_feed):
+            raise SourceToolError('Feed URL points at a local or private address')
+        candidate = _discover_feed_candidate(scraper, dict(payload, url=url),
+                                             explicit_feed)
+        if candidate:
+            return {'url': url, 'fetched_url': explicit_feed,
+                    'count': 1, 'candidates': [candidate]}
+        if str(payload.get('type') or '').lower() == 'rss':
+            raise SourceToolError('The supplied feed contained no usable entries', 502)
     try:
-        response = scraper.scraper.get(
-            url, headers={'User-Agent': random.choice(scraper.user_agents)},
-            timeout=20, allow_redirects=True)
+        response = scraper._request_with_safe_redirects(
+            url, {'User-Agent': random.choice(scraper.user_agents)},
+            timeout=(5, 15), request_limit=5, counter=[0])
     except Exception as exc:  # noqa: BLE001
         raise SourceToolError(f'{type(exc).__name__}: {str(exc)[:160]}', 502) from exc
     if response.status_code != 200:
+        response.close()
         raise SourceToolError(f'HTTP {response.status_code}', 502,
                               response.status_code)
+    try:
+        body = scraper._read_listing_body(response)
+    except OverflowError as exc:
+        raise SourceToolError(str(exc), 502) from exc
+    response._content = body
+    response._content_consumed = True
+    if not is_public_url(response.url or url):
+        raise SourceToolError('Request redirected to a local or private address', 502)
     if is_challenge_page(response.text):
         raise SourceToolError('Blocked by a bot challenge', 502)
 
@@ -148,6 +106,13 @@ def test_source(scraper, payload):
         'state': health['state'], 'http_status': health['http_status'],
         'error': health['error'], 'duration_ms': health['duration_ms'],
         'count': len(articles), 'preview': _preview_payload(articles),
+        'diagnostics': {
+            key: health.get(key) for key in (
+                'failure_kind', 'fetch_url', 'final_url', 'strategy_id',
+                'selector_used', 'raw_candidates', 'accepted_articles',
+                'rejected_counts', 'invalid_selectors', 'parser_warning', 'quality_warnings',
+                'response_bytes', 'content_type')
+        },
     }
 
 
@@ -201,8 +166,10 @@ def _derived_selectors(soup):
             continue
         heading = anchor.find(['h1', 'h2', 'h3'])
         if heading:
-            selectors.extend((heading.name + ' a', 'article ' + heading.name + ' a',
-                              'main ' + heading.name + ' a'))
+            selectors.extend((f'a:has(> {heading.name})',
+                              'article a ' + heading.name,
+                              'main a ' + heading.name,
+                              heading.name + ' a'))
         for node in [anchor] + list(anchor.parents)[:4]:
             useful = [name for name in (node.get('class') or [])
                       if any(hint in name.lower() for hint in CARD_CLASS_HINTS)]
@@ -240,13 +207,7 @@ def _feed_links(soup, page_url):
 
 def _discover_feed_candidate(scraper, payload, feed_url):
     source = _candidate_source(payload, 'rss', feed_url)
-    try:
-        response = scraper.scraper.get(feed_url, timeout=15, allow_redirects=True)
-    except Exception:  # noqa: BLE001
-        return None
-    if response.status_code != 200:
-        return None
-    articles = scraper.fetch_feed(source, response)
+    articles, health = scraper.scrape_source(dict(source, retries=1))
     if not articles:
         return None
     return {
@@ -254,6 +215,10 @@ def _discover_feed_candidate(scraper, payload, feed_url):
         'fallback': '', 'feed_url': feed_url, 'match_count': len(articles),
         'count': len(articles), 'confidence': min(99, 78 + min(len(articles), 12)),
         'preview': _preview_payload(articles),
+        'diagnostics': {
+            key: health.get(key) for key in (
+                'failure_kind', 'final_url', 'response_bytes', 'parser_warning')
+        },
     }
 
 
