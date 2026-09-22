@@ -111,9 +111,10 @@
   [
     'grid', 'reading', 'search', 'scoreSwitch', 'viewSwitch', 'sortSwitch',
     'refreshBtn', 'themeBtn', 'resultCount', 'lastUpdated', 'toasts', 'nextSync',
-    'statusDot', 'healthBtn', 'healthCount', 'sourcesBtn', 'helpBtn',
-    'progress', 'progressBar', 'progressLabel', 'banner', 'bannerText',
-    'bannerAction', 'filters', 'newPill', 'unreadBtn', 'moreBtn',
+    'statusDot', 'status', 'statusChip', 'statusChipText', 'statusPanel',
+    'statusPanelList', 'statusPanelAction', 'sourcesBtn', 'helpBtn',
+    'progress', 'progressBar', 'progressLabel',
+    'filters', 'newPill', 'unreadBtn', 'moreBtn',
     'moreMenu', 'markReadBtn', 'sourcesDialog', 'helpDialog', 'sourceList',
     'sourcesSummary', 'addSource', 'addSourceForm', 'discoverSourceBtn',
     'testSourceBtn', 'testPreview', 'sourceDiscovery', 'sourceType',
@@ -1039,8 +1040,8 @@
     var rows = '';
     for (var r = 0; r < 4; r++) {
       rows += '<div class="skeleton-row">' +
-        '<span class="skeleton" style="width:70%;height:1rem"></span>' +
-        '<span class="skeleton" style="width:30%;height:0.625rem"></span>' +
+        '<span class="skeleton skeleton--line" style="width:70%"></span>' +
+        '<span class="skeleton skeleton--subline" style="width:30%"></span>' +
       '</div>';
     }
 
@@ -1049,8 +1050,8 @@
       for (var c = 0; c < 8; c++) {
         cards += '<section class="card srccard">' +
           '<header class="srccard__head">' +
-            '<p class="srccard__kicker"><span class="skeleton" style="width:4rem;height:0.625rem"></span></p>' +
-            '<span class="skeleton" style="width:60%;height:1.25rem"></span>' +
+            '<p class="srccard__kicker"><span class="skeleton skeleton--label"></span></p>' +
+            '<span class="skeleton skeleton--title" style="width:60%"></span>' +
           '</header>' +
           '<div class="srccard__list">' + rows + '</div>' +
         '</section>';
@@ -1064,7 +1065,7 @@
       for (var t = 0; t < 4; t++) {
         topics += '<section class="topic">' +
           '<header class="topic__head">' +
-            '<span class="skeleton" style="width:12rem;height:2rem"></span>' +
+            '<span class="skeleton skeleton--heading"></span>' +
           '</header>' +
           '<div class="topic__list">' + rows + '</div>' +
         '</section>';
@@ -1076,7 +1077,7 @@
     var feed = '';
     for (var f = 0; f < 4; f++) feed += rows;
     el.grid.innerHTML = '<section class="daygroup">' +
-      '<div class="daygroup__label"><span class="skeleton" style="width:4rem;height:0.75rem"></span></div>' +
+      '<div class="daygroup__label"><span class="skeleton skeleton--label"></span></div>' +
       '<div class="daygroup__list">' + feed + '</div></section>';
   }
 
@@ -1103,36 +1104,98 @@
     el.statusDot.dataset.state = dot;
   }
 
-  function renderBanner() {
-    var message = null;
-    var action = null;
+  /* == Status ==============================================================
+     Everything wrong with the data, gathered in one place. These used to be
+     four mutually exclusive banners, so a page that was both stale and losing
+     sources only ever admitted to one of them. They are a list now: the chip
+     names each in two or three words, and the panel behind it carries the
+     sentences. The order is the order they matter in, which is also the order
+     the panel reads and the order the action is taken from -- an unreachable
+     server is worth fixing before a stale headline is. */
+  function statusConditions() {
+    var list = [];
 
     if (state.pollFailures >= 1) {
-      message = 'Cannot reach the server — showing the last data we loaded. Retrying…';
-      action = { label: 'Retry now', handler: function () { load({ silent: true }); } };
-    } else if (state.stats && state.stats.storage_error) {
-      message = state.stats.storage_error;
-      action = { label: 'Retry now', handler: refresh };
-    } else if (state.status === 'ready' && state.lastSync &&
-               Date.now() - state.lastSync.getTime() > 3600000) {
-      message = 'These headlines are over an hour old. The scheduled scrape may not be running.';
-      action = { label: state.stats && state.stats.refresh_mode === 'check' ? 'Check updates' : 'Re-scrape', handler: refresh };
-    } else if (state.health && state.health.failing >= 3) {
-      message = plural(state.health.failing, 'source') + ' stopped returning headlines, ' +
-                'so parts of the feed are missing.';
-      action = { label: 'Review sources', handler: openSources };
+      list.push({
+        tone: 'error',
+        label: 'offline',
+        text: 'Cannot reach the server — showing the last data we loaded. Retrying…',
+        action: { label: 'Retry now', handler: function () { load({ silent: true }); } }
+      });
     }
 
-    el.banner.hidden = !message;
-    if (!message) return;
+    if (state.stats && state.stats.storage_error) {
+      list.push({
+        tone: 'error',
+        label: 'storage error',
+        text: state.stats.storage_error,
+        action: { label: 'Retry now', handler: refresh }
+      });
+    }
 
-    el.bannerText.textContent = message;
-    el.banner.dataset.tone = state.pollFailures || (state.stats && state.stats.storage_error) ? 'error' : 'warn';
-    el.bannerAction.hidden = !action;
+    if (state.status === 'ready' && state.lastSync &&
+        Date.now() - state.lastSync.getTime() > 3600000) {
+      list.push({
+        tone: 'warn',
+        label: shortAge(Date.now() - state.lastSync.getTime()) + ' stale',
+        text: 'These headlines are over an hour old. The scheduled scrape may not be running.',
+        action: {
+          label: state.stats && state.stats.refresh_mode === 'check' ? 'Check updates' : 'Re-scrape',
+          handler: refresh
+        }
+      });
+    }
+
+    if (state.health && state.health.failing > 0) {
+      list.push({
+        tone: 'warn',
+        label: state.health.failing + ' failing',
+        text: plural(state.health.failing, 'source') + ' stopped returning headlines, ' +
+              'so parts of the feed are missing.',
+        action: { label: 'Review sources', handler: openSources }
+      });
+    }
+
+    return list;
+  }
+
+  function renderStatus() {
+    var conditions = statusConditions();
+
+    el.status.hidden = conditions.length === 0;
+    if (!conditions.length) {
+      closeStatusPanel();
+      return;
+    }
+
+    var tone = conditions.some(function (c) { return c.tone === 'error'; }) ? 'error' : 'warn';
+    el.status.dataset.tone = tone;
+
+    el.statusChipText.textContent = conditions.map(function (c) { return c.label; }).join(' · ');
+    el.statusChip.setAttribute('aria-label',
+      conditions.map(function (c) { return c.text; }).join(' '));
+
+    el.statusPanelList.innerHTML = conditions.map(function (c) {
+      return '<li>' + escapeHtml(c.text) + '</li>';
+    }).join('');
+
+    // One button, for the first thing worth doing. The rest of the list is
+    // reachable from the sources dialog, and two competing buttons in a panel
+    // this small reads as a choice rather than a fix.
+    var action = conditions[0].action;
+    el.statusPanelAction.hidden = !action;
     if (action) {
-      el.bannerAction.textContent = action.label;
-      el.bannerAction.onclick = action.handler;
+      el.statusPanelAction.textContent = action.label;
+      el.statusPanelAction.onclick = function () {
+        closeStatusPanel();
+        action.handler();
+      };
     }
+  }
+
+  function closeStatusPanel() {
+    el.statusPanel.hidden = true;
+    el.statusChip.setAttribute('aria-expanded', 'false');
   }
 
   function renderFilters() {
@@ -1203,7 +1266,7 @@
     el.unreadBtn.setAttribute('aria-checked', state.unreadOnly ? 'true' : 'false');
 
     renderFilters();
-    renderBanner();
+    renderStatus();
 
     if (state.status === 'loading') {
       renderHead([], 0);
@@ -1651,8 +1714,7 @@
   function applyHealth(health) {
     state.health = health;
     if (!health) return;
-    el.healthBtn.hidden = health.failing === 0;
-    el.healthCount.textContent = plural(health.failing, 'source') + ' failing';
+    renderStatus();
     el.sourcesSummary.textContent =
       health.ok + ' working · ' + health.failing + ' failing · ' +
       health.disabled + ' disabled · ' + health.total + ' configured';
@@ -1683,7 +1745,7 @@
       state.pollFailures++;
       if (silent) {
         renderFreshness();
-        renderBanner();
+        renderStatus();
       } else {
         state.status = 'error';
         render();
@@ -1715,7 +1777,7 @@
           state.pendingCount = fresh.length;
           showNewPill();
           renderFreshness();
-          renderBanner();
+          renderStatus();
           return dashboard;
         }
       }
@@ -1791,7 +1853,7 @@
         // problem the status dot reports, so say so there too.
         state.pollFailures++;
         renderFreshness();
-        renderBanner();
+        renderStatus();
         toast('error', error.message || 'Could not refresh the feed.');
       });
   }
@@ -2298,25 +2360,31 @@
 
   /* == Theme =============================================================== */
 
-  var THEMES = ['system', 'light', 'dark'];
+  var THEMES = ['light', 'dark'];
+
+  // No usable stored choice — nothing yet, or the retired 'system' — opens in
+  // whichever theme the machine asks for. The button owns it from then on.
+  function storedTheme() {
+    var stored = readPref('hs.theme', '');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
 
   function applyTheme(preference) {
-    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var resolved = preference === 'system' ? (prefersDark ? 'dark' : 'light') : preference;
+    var resolved = preference === 'dark' ? 'dark' : 'light';
 
     document.documentElement.dataset.theme = resolved;
-    document.documentElement.dataset.themePref = preference;
     el.themeIcon.innerHTML = '<use href="#i-' +
-      (preference === 'system' ? 'system' : (resolved === 'dark' ? 'moon' : 'sun')) + '"/>';
-    el.themeBtn.setAttribute('aria-label', 'Colour theme: ' + preference +
-      '. Click for ' + THEMES[(THEMES.indexOf(preference) + 1) % THEMES.length] + '.');
-    el.themeBtn.title = 'Theme: ' + preference;
-    writePref('hs.theme', preference);
+      (resolved === 'dark' ? 'moon' : 'sun') + '"/>';
+    el.themeBtn.setAttribute('aria-label', 'Colour theme: ' + resolved +
+      '. Click for ' + THEMES[(THEMES.indexOf(resolved) + 1) % THEMES.length] + '.');
+    el.themeBtn.title = 'Theme: ' + resolved;
+    writePref('hs.theme', resolved);
   }
 
   // Same swap, wrapped in a circular wipe out of the control that caused it.
-  // Only the click path animates: a system-preference change or the initial
-  // paint has no origin to open from, and no gesture to explain the motion.
+  // Only the click path animates: the initial paint has no origin to open
+  // from, and no gesture to explain the motion.
   function switchTheme(preference, origin) {
     if (!document.startViewTransition ||
         window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -2344,10 +2412,6 @@
 
     function clear() { delete root.dataset.themeSwitching; }
   }
-
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
-    if (readPref('hs.theme', 'system') === 'system') applyTheme('system');
-  });
 
   /* == URL and selectors =================================================== */
 
@@ -2518,7 +2582,12 @@
   el.newPill.addEventListener('click', applyPending);
   el.helpBtn.addEventListener('click', function () { el.helpDialog.showModal(); });
   el.sourcesBtn.addEventListener('click', function () { openSources(); });
-  el.healthBtn.addEventListener('click', function () { openSources(); });
+  el.statusChip.addEventListener('click', function (event) {
+    event.stopPropagation();
+    var open = el.statusPanel.hidden;
+    el.statusPanel.hidden = !open;
+    el.statusChip.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
 
   el.markReadBtn.addEventListener('click', function () {
     var articles = renderedArticles();
@@ -2605,7 +2674,7 @@
   window.addEventListener('scroll', updateActiveTopic, { passive: true });
 
   el.themeBtn.addEventListener('click', function () {
-    var current = readPref('hs.theme', 'system');
+    var current = storedTheme();
     switchTheme(THEMES[(THEMES.indexOf(current) + 1) % THEMES.length], el.themeBtn);
   });
 
@@ -2702,6 +2771,7 @@
 
   document.addEventListener('click', function (event) {
     if (!el.moreMenu.hidden && !event.target.closest('.menu')) closeMoreMenu();
+    if (!el.statusPanel.hidden && !event.target.closest('.status')) closeStatusPanel();
   });
 
   /* -- Dialogs ------------------------------------------------------------ */
@@ -2891,6 +2961,7 @@
 
     if (event.key === 'Escape') {
       if (!el.moreMenu.hidden) { closeMoreMenu(); return; }
+      if (!el.statusPanel.hidden) { closeStatusPanel(); el.statusChip.focus(); return; }
       if (document.activeElement === el.search) {
         el.search.value = '';
         state.query = '';
@@ -2952,9 +3023,36 @@
     }
   });
 
+  /* == Measured header height ==============================================
+     --sticky-top is the token every sticky offset and scroll-margin is built
+     from: the category index, the day label, the new-items pill and the topic
+     anchors all sit at `calc(var(--sticky-top) + <a step>)`. park.css and the
+     breakpoints give it the height the header has at each width, which is
+     right until the header wraps at a size nobody measured -- a longer
+     masthead, a fifth view, a narrower phone -- and then all four land
+     underneath it.
+
+     So the CSS values are the pre-JS fallback and this is the truth: the real
+     height, rounded up to the 4px grid the token lives on, rewritten whenever
+     the header changes size. It is deliberately not --appbar-h: that one sets
+     the bar's own row height, and writing a measurement back into it would
+     make the bar grow off its own output. */
+  function syncStickyTop(bar) {
+    var height = Math.ceil(bar.getBoundingClientRect().height / 4) * 4;
+    document.documentElement.style.setProperty('--sticky-top', height + 'px');
+  }
+
+  var appbar = document.querySelector('.appbar');
+  if (appbar && window.ResizeObserver) {
+    new ResizeObserver(function () { syncStickyTop(appbar); }).observe(appbar);
+  } else if (appbar) {
+    syncStickyTop(appbar);
+    window.addEventListener('resize', function () { syncStickyTop(appbar); });
+  }
+
   /* == Boot ================================================================ */
 
-  applyTheme(readPref('hs.theme', 'system'));
+  applyTheme(storedTheme());
 
   // Read every stored and linked preference before applying any of them: each
   // selector rewrites the URL, which would clobber the others mid-boot.
@@ -2986,6 +3084,6 @@
     }
   });
   setInterval(function () {
-    if (state.status === 'ready') renderFreshness();
+    if (state.status === 'ready') { renderFreshness(); renderStatus(); }
   }, 20000);
 })();

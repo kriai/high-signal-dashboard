@@ -8,13 +8,13 @@
     <title>High Signal — AI news, ranked</title>
 
     <!-- Resolve the theme before first paint so dark mode never flashes white.
-         'system' is a stored value in its own right, not the absence of one. -->
+         Only light and dark are stored; the machine's preference is the
+         starting point for a visitor who has not chosen yet. -->
     <script>
         (function () {
             var stored = null;
             try { stored = localStorage.getItem('hs.theme'); } catch (e) {}
             var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            document.documentElement.dataset.themePref = stored || 'system';
             document.documentElement.dataset.theme =
                 (stored === 'light' || stored === 'dark')
                     ? stored
@@ -66,11 +66,6 @@
             <g id="i-moon" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
                 <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>
-            </g>
-            <g id="i-system" fill="none" stroke="currentColor" stroke-width="2"
-               stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="3" width="20" height="14" rx="2"/>
-                <path d="M8 21h8M12 17v4"/>
             </g>
             <g id="i-arrow" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round">
@@ -201,11 +196,24 @@
             </div>
 
             <div class="appbar__actions">
-                <button id="healthBtn" class="btn btn--sm pill pill--warn" hidden
-                        title="Some sources are not returning headlines">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
-                    <span id="healthCount">0 failing</span>
-                </button>
+                <!-- The one place the app says something is wrong. It used to be a
+                     full-width band under the bar, which cost a strip of the first
+                     screen to tell the reader something they could not act on from
+                     there anyway. Now it is a chip that is absent when there is
+                     nothing to report, names the trouble in two or three words, and
+                     opens the sentence and the fix on click. -->
+                <div class="status" id="status" hidden>
+                    <button id="statusChip" class="statuschip" aria-haspopup="true" aria-expanded="false">
+                        <span class="statuschip__dot" aria-hidden="true"></span>
+                        <span class="statuschip__text" id="statusChipText"></span>
+                        <svg class="statuschip__caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg>
+                    </button>
+
+                    <div class="statuspanel card" id="statusPanel" role="status" hidden>
+                        <ul class="statuspanel__list" id="statusPanelList"></ul>
+                        <button class="btn btn--solid btn--sm" id="statusPanelAction" hidden></button>
+                    </div>
+                </div>
 
                 <button id="sourcesBtn" class="btn btn--outline btn--icon"
                         title="Manage sources" aria-label="Manage sources"
@@ -278,7 +286,7 @@
                 </button>
 
                 <button id="themeBtn" class="btn btn--outline btn--icon" aria-label="Colour theme">
-                    <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-system"/></svg>
+                    <svg viewBox="0 0 24 24" data-theme-icon><use href="#i-sun"/></svg>
                 </button>
             </div>
         </div>
@@ -298,14 +306,6 @@
             <span class="progress__label" id="progressLabel"></span>
         </div>
     </header>
-
-    <div class="shell">
-        <div class="banner" id="banner" role="status" hidden>
-            <svg class="banner__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-offline"/></svg>
-            <span id="bannerText"></span>
-            <button class="btn btn--ghost btn--sm" id="bannerAction" hidden></button>
-        </div>
-    </div>
 
     <main class="shell">
         <!-- The view already names itself in the nav above, so the title is here
@@ -363,7 +363,6 @@
              page's table of contents. -->
         <div class="reading" id="reading" data-index="off">
             <aside class="catindex" id="catIndex" hidden>
-                <p class="catindex__label">Categories</p>
                 <nav class="catindex__nav" id="catIndexNav" aria-label="Categories"></nav>
                 <p class="catindex__note">
                     Four stories per topic.<br>Expand any section to read more.

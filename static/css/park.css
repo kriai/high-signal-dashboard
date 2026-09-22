@@ -96,11 +96,119 @@
   --accent-fg: #ffffff;
   --accent-text: var(--accent-11);
 
-  /* radii.md nesting: l1 -> md, l2 -> lg, l3 -> xl */
+  /* radii.md nesting: l1 -> md, l2 -> lg, l3 -> xl. --radius-xs is an
+     addition, for the one thing too small to take l1: an inline <mark>. */
+  --radius-xs: 0.125rem;
   --radius-l1: 0.375rem;
   --radius-l2: 0.5rem;
   --radius-l3: 0.75rem;
   --radius-full: 9999px;
+
+  /* == Space ==============================================================
+     A strict 4px grid. Every margin, padding, gap, offset and control size in
+     this app resolves to one of these steps and to nothing between them -- the
+     suffix is the step count, so --space-3 is 3 x 4px. Control heights come
+     from the same scale rather than a second one, which is why a 2.5rem input
+     and a --space-10 gutter are guaranteed to agree.
+
+     There is deliberately no 2px step. Anything that wanted one was either a
+     hairline (a border, which is measured in px and is not space) or a gap
+     between two icon buttons, which reads the same at 0 or at 4. */
+  --space-0: 0;
+  --space-1: 0.25rem;   /*   4px */
+  --space-2: 0.5rem;    /*   8px */
+  --space-3: 0.75rem;   /*  12px */
+  --space-4: 1rem;      /*  16px */
+  --space-5: 1.25rem;   /*  20px */
+  --space-6: 1.5rem;    /*  24px */
+  --space-7: 1.75rem;   /*  28px */
+  --space-8: 2rem;      /*  32px */
+  --space-9: 2.25rem;   /*  36px */
+  --space-10: 2.5rem;   /*  40px */
+  --space-11: 2.75rem;  /*  44px */
+  --space-12: 3rem;     /*  48px */
+  --space-13: 3.25rem;  /*  52px */
+  --space-14: 3.5rem;   /*  56px */
+  --space-16: 4rem;     /*  64px */
+  --space-18: 4.5rem;   /*  72px */
+  --space-20: 5rem;     /*  80px */
+  --space-24: 6rem;     /*  96px */
+
+  /* == Type ===============================================================
+     Seven steps, each one paired with a line height that is itself a multiple
+     of 4, so the vertical grid survives every size on the page. The ramp is
+     roughly 1.25x at the display end and 1.15x through the interface sizes:
+
+       3xl  34/40  the topic heading, the largest thing on the page
+       2xl  28/32  the masthead
+       xl   22/28  a source card's name
+       lg   18/28  a headline
+       md   16/24  body prose and dialog titles
+       sm   14/20  every control: buttons, tabs, nav, inputs, menu items
+       xs   12/16  metadata, counts, uppercase micro-labels, keyboard keys
+
+     Three steps carry everything below 18px, which is the point: 11px, 13px
+     and 15px are not rungs on a ladder, they are the same rung three times. */
+  --text-3xl: 2.125rem;  --leading-3xl: 2.5rem;
+  --text-2xl: 1.75rem;   --leading-2xl: 2rem;
+  --text-xl:  1.375rem;  --leading-xl:  1.75rem;
+  --text-lg:  1.125rem;  --leading-lg:  1.75rem;
+  --text-md:  1rem;      --leading-md:  1.5rem;
+  --text-sm:  0.875rem;  --leading-sm:  1.25rem;
+  --text-xs:  0.75rem;   --leading-xs:  1rem;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+
+  /* Tracking follows the job, not the size: the serif display sizes close up,
+     the sans headline closes up a little, and the 12px uppercase labels open
+     out. Nothing else is tracked at all. */
+  --tracking-display: -0.025em;
+  --tracking-title: -0.015em;
+  --tracking-label: 0.07em;
+
+  /* == Layout =============================================================
+     The page is one container and four rails. Gutters are tokens rather than
+     per-component numbers so that a column gap and the page margin beside it
+     can only ever change together; --gutter-page and --gutter-column are
+     redefined inside the breakpoints at the foot of app.css. */
+  --container-max: 82.5rem;  /* 1320px */
+  --gutter-page: var(--space-10);
+  --gutter-column: var(--space-16);
+  --gutter-card: var(--space-4);
+  --rail-index: 14rem;       /* the category index */
+  --rail-day: 7rem;          /* the feed's day gutter */
+  /* --appbar-h is the height the app bar's own row is told to be. --sticky-top
+     is how far down the page the header actually ends, which is a different
+     number as soon as the jump bar appears or the bar wraps; everything sticky
+     or scroll-anchored measures from that one. dashboard.js overwrites it with
+     the observed height, so the values below and in the breakpoints are the
+     pre-JS fallback rather than the final word. */
+  --appbar-h: var(--space-20);
+  --sticky-top: var(--appbar-h);
+
+  /* Line-length caps. Prose and headlines stop well short of the container.
+     These, and the handful of whole-rem widths that cap a single component
+     (a menu, a toast, the search field), are the only lengths in the app that
+     are not --space-* steps: they size a box rather than the space around it,
+     and every one of them is a whole rem, so they stay on the 4px grid. */
+  --measure-headline: 46rem;
+  --measure-prose: 34rem;
+
+  /* Stacking order, as a ladder rather than a set of guesses. */
+  --z-raised: 15;   /* the new-items pill, over the stream */
+  --z-appbar: 20;
+  --z-menu: 30;
+  --z-toast: 50;
+  --z-skip: 60;
+
+  /* Breakpoints. Media queries cannot read custom properties, so this comment
+     is the list they are written from -- four steps, no others:
+       lg 72rem   the page margin and the column gap tighten
+       md 60rem   the category index becomes the jump bar, the app bar stacks
+       sm 46rem   the feed loses its day gutter, the reading column narrows
+       xs 34rem   two-column forms and the source board become one column   */
 
   /* Park UI's own stack, fronted by this app's interface face. --font-mono is
      an addition: Park has no monospace token, and the dashboard needs one for
@@ -132,8 +240,8 @@ body {
   background: var(--bg-canvas);
   color: var(--fg-default);
   font-family: var(--font-sans);
-  font-size: 1rem;
-  line-height: 1.5rem;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -145,19 +253,15 @@ svg { display: block; }
 
 :where(a, button, input, [tabindex]):focus-visible {
   outline: 2px solid var(--accent-default);
-  outline-offset: 2px;
+  outline-offset: 2px;  /* a ring, not space: stays in px */
   border-radius: var(--radius-l1);
 }
 
-/* Park UI text styles */
-.text-xs { font-size: 0.75rem;  line-height: 1.125rem; }
-.text-sm { font-size: 0.875rem; line-height: 1.25rem; }
-.text-md { font-size: 1rem;     line-height: 1.5rem; }
-.text-2xl { font-size: 1.5rem;  line-height: 2rem; }
-.text-3xl { font-size: 1.875rem; line-height: 2.375rem; letter-spacing: -0.02em; }
-
-.fg-muted { color: var(--fg-muted); }
-.fg-subtle { color: var(--fg-subtle); }
+/* Park UI ships its text styles as utility classes. Here the scale lives in
+   the --text-*/--leading-* tokens above instead, because the components are
+   styled by class rather than composed in the markup -- a .text-sm sitting
+   beside a .row__title that also sets a size is two sources of truth. The one
+   utility that survives is the one the markup actually uses. */
 .numeric { font-variant-numeric: tabular-nums; }
 
 /* == Button recipe ======================================================== */
@@ -165,16 +269,16 @@ svg { display: block; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   flex-shrink: 0;
-  height: 2.5rem;
-  padding-inline: 0.875rem;
+  height: var(--space-10);
+  padding-inline: var(--space-3);
   border: 0;
   border-radius: var(--radius-l2);
   background: transparent;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
@@ -183,7 +287,7 @@ svg { display: block; }
               color var(--duration-normal) var(--ease-default);
 }
 
-.btn svg { width: 1.1em; height: 1.1em; }
+.btn svg { width: var(--space-4); height: var(--space-4); }
 .btn:disabled { cursor: not-allowed; color: var(--fg-subtle); }
 
 .btn--solid {
@@ -203,39 +307,39 @@ svg { display: block; }
 .btn--ghost:hover:not(:disabled) { background: var(--gray-a3); color: var(--fg-default); }
 
 .btn--icon {
-  width: 2.5rem;
-  padding-inline: 0;
+  width: var(--space-10);
+  padding-inline: var(--space-0);
 }
 
 .btn--sm {
-  height: 2.25rem;
-  padding-inline: 0.75rem;
+  height: var(--space-9);
+  padding-inline: var(--space-3);
 }
-.btn--sm.btn--icon { width: 2.25rem; }
+.btn--sm.btn--icon { width: var(--space-9); }
 
 /* == Badge recipe ========================================================= */
 .badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.375rem;
-  height: 1.5rem;
-  padding-inline: 0.625rem;
+  gap: var(--space-1);
+  height: var(--space-6);
+  padding-inline: var(--space-2);
   border-radius: var(--radius-full);
   border: 1px solid var(--border-subtle);
   background: var(--bg-subtle);
   color: var(--fg-default);
-  font-size: 0.75rem;
-  line-height: 1.125rem;
-  font-weight: 500;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-medium);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   user-select: none;
 }
 
 .badge--sm {
-  height: 1.25rem;
-  padding-inline: 0.5rem;
+  height: var(--space-5);
+  padding-inline: var(--space-2);
 }
 
 /* Tonal badges follow Radix's subtle recipe: 3 = surface, 6 = border, 11 = text */
@@ -254,15 +358,15 @@ svg { display: block; }
 /* == Input recipe ========================================================= */
 .input {
   width: 100%;
-  height: 2.5rem;
-  padding-inline: 0.75rem;
+  height: var(--space-10);
+  padding-inline: var(--space-3);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-l2);
   background: var(--bg-default);
   color: var(--fg-default);
   font-family: var(--font-sans);
-  font-size: 0.875rem;
-  line-height: 1.25rem;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
   transition: border-color var(--duration-normal) var(--ease-default),
               box-shadow var(--duration-normal) var(--ease-default);
 }
@@ -279,23 +383,23 @@ svg { display: block; }
 .segment {
   display: inline-flex;
   align-items: center;
-  gap: 0.125rem;
-  height: 2.5rem;
-  padding: 0.25rem;
+  gap: var(--space-1);
+  height: var(--space-10);
+  padding: var(--space-1);
   border-radius: var(--radius-l2);
   background: var(--bg-muted);
 }
 
 .segment__item {
-  height: 2rem;
-  padding-inline: 0.75rem;
+  height: var(--space-8);
+  padding-inline: var(--space-3);
   border: 0;
-  border-radius: calc(var(--radius-l2) - 0.125rem);
+  border-radius: calc(var(--radius-l2) - var(--radius-xs));
   background: transparent;
   color: var(--fg-muted);
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-default),
               color var(--duration-fast) var(--ease-default);
@@ -303,12 +407,11 @@ svg { display: block; }
 
 .segment__item:hover { color: var(--fg-default); }
 
-/* The toolbar cut, sized to share a row with .btn--sm. */
-.segment--sm { height: 2.25rem; padding: 0.1875rem; }
+/* The toolbar cut, sized to share a row with .btn--sm: 36 = 28 + 2 x 4. */
+.segment--sm { height: var(--space-9); padding: var(--space-1); }
 .segment--sm .segment__item {
-  height: 1.875rem;
-  padding-inline: 0.625rem;
-  font-size: 0.8125rem;
+  height: var(--space-7);
+  padding-inline: var(--space-2);
 }
 
 .segment__item[aria-checked='true'] {
