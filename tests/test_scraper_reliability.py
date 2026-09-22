@@ -248,14 +248,18 @@ class RetentionReliabilityTests(unittest.TestCase):
     def test_failure_retains_last_good_batch_without_marking_health_ok(self):
         scraper = HighSignalScraper(sources=[SOURCE])
         fresh = self.article(scraper)
+        # Relative to the real clock: retention compares against now, so a fixed
+        # date here passes for 72 hours after it is written and fails ever after.
+        fetched_at = (datetime.now(timezone.utc) - timedelta(hours=1)
+                      ).isoformat().replace('+00:00', 'Z')
         success = {'name': 'Example', 'state': 'ok', 'articles': 1,
-                   'attempted': True, 'last_success': '2026-09-10T10:00:00Z',
+                   'attempted': True, 'last_success': fetched_at,
                    'consecutive_failures': 0}
         with patch.object(scraper, 'scrape_source', return_value=([fresh], success)), \
                 patch('scraper.time.sleep'):
             scraper.scrape_all(persist_health=False)
         failure = {'name': 'Example', 'state': 'error', 'articles': 0,
-                   'attempted': True, 'last_success': '2026-09-10T10:00:00Z',
+                   'attempted': True, 'last_success': fetched_at,
                    'consecutive_failures': 1, 'error': 'HTTP 403'}
         with patch.object(scraper, 'scrape_source', return_value=([], failure)), \
                 patch('scraper.time.sleep'):
