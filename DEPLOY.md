@@ -305,8 +305,14 @@ python scripts/audit_sources.py --d1 --source "The Information"
     so a new block still shows up as `blocked`.
   - After marking a source relay, `POST /api/admin/relay/refresh` with the
     owner token fills its copy immediately instead of waiting for the timer.
-  - Cost on the Free plan: 4 feeds × 48 runs is about 200 D1 rows written a
-    day, out of 100,000.
+  - The refresh runs inside a SQLite-backed Durable Object (`RelayRefresher`).
+    A Free plan Worker invocation gets 10 ms of CPU, and the timer measured
+    18 ms for four feeds, almost all per-run overhead. A Durable Object gets
+    30 seconds. It is started only by the timer or the owner, so it still
+    fetches with no Actions caller behind it.
+  - Cost on the Free plan: roughly 50 Durable Object requests a day out of
+    100,000 and about 12 GB-s of 13,000; at most about 200 D1 rows written a
+    day out of 100,000, far fewer once most answers are 304s.
 
   It is still the public feed an RSS reader gets, at about two requests an hour.
   Substack could extend the block; if it does, those sources fall back to
