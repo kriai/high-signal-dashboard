@@ -34,7 +34,7 @@ npx wrangler dev --local
 ```
 
 Before the first remote preview, create a separate D1 database, replace the
-placeholder `database_id` in `wrangler.jsonc`, apply both migrations, and review
+placeholder `database_id` in `wrangler.jsonc`, apply every migration, and review
 the import without credentials before allowing writes:
 
 ```bash
@@ -223,6 +223,13 @@ reactivate the store or erase prior usage. After access returns, dispatch
 `Scrape sources` and check for one write in its log, then verify the dashboard.
 In GitHub, enable workflow failure notifications to catch stopped publication.
 
+The deploy workflow does not apply D1 migrations. Apply a new one before the
+Worker that needs it goes live; they are additive, so older code ignores them:
+
+```bash
+npx wrangler d1 migrations apply high-signal-preview --remote --env preview
+```
+
 Run the offline regression suite before publishing:
 
 ```bash
@@ -267,14 +274,33 @@ python scripts/audit_sources.py --d1 --source "The Information"
   immediately. Health still reports the failure and the retained count; stale
   content is never presented as a fresh success.
 
-  For Substack there is a free way round it. Its feeds answer Cloudflare, so a
-  source marked `"relay": true` fetches through the Worker's `/api/relay/feed`
-  (health shows `transport: relay`). The relay is not an open proxy: it needs
-  its own token, separate from `ADMIN_API_TOKEN`, and it fetches only the
-  endpoints of enabled sources marked relay in D1. It is still the public feed
-  an RSS reader gets, at the same rate. Substack could extend the block to
-  Cloudflare; if it does, those sources fall back to bounded stale retention
-  like any other failure.
+  For Substack there is a free way round it, with one twist. Substack also
+  refuses the Worker while it is answering a request *from Actions* (the
+  caller's network evidently carries through to the Worker's own fetch), yet it
+  answers the same Worker running on its own schedule, from US and other
+  regions alike. So a Cron Trigger (`*/30 * * * *`) saves the feeds of sources
+  marked `"relay": true` into D1's `relay_copies` table, and
+  `/api/relay/feed` serves the saved copy. Nothing Actions asks for is fetched
+  live. Health shows `transport: relay`.
+
+  - The relay is not an open proxy. It needs its own token, separate from
+    `ADMIN_API_TOKEN`, and serves only the exact endpoints the scraper requests
+    for enabled sources marked relay.
+  - A copy older than 3 hours is not served, so a stopped timer surfaces as a
+    failure instead of passing old news off as fresh. The publisher's own
+    status is saved too: a Substack 403 still reads as `blocked`.
+  - Copies are stored as UTF-8 text. D1 returns BLOBs as arrays of numbers,
+    which is too slow to rebuild within the Free plan's 10 ms CPU budget for a
+    feed near a megabyte. A feed that isn't UTF-8, or is over 1.9 MB, is not
+    saved.
+  - After marking a source relay, `POST /api/admin/relay/refresh` with the
+    owner token fills its copy immediately instead of waiting for the timer.
+  - Cost on the Free plan: 4 feeds × 48 runs is about 200 D1 rows written a
+    day, out of 100,000.
+
+  It is still the public feed an RSS reader gets, at about two requests an hour.
+  Substack could extend the block; if it does, those sources fall back to
+  bounded stale retention like any other failure.
 
   Several non-Substack sites (Import AI, Stratechery) blocked only their
   homepage from Actions. Their RSS feeds answer normally, so those sources read

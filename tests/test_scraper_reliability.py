@@ -249,8 +249,10 @@ class TransportReliabilityTests(unittest.TestCase):
     </channel></rss>'''
 
     def relayed(self, status, text='', upstream=True):
+        if not upstream and not text:
+            text = json.dumps({'error': 'No saved copy of this feed yet'})
         item = response(status, text, 'https://site.example/api/relay/feed',
-                        'application/rss+xml')
+                        'application/rss+xml' if upstream else 'application/json')
         if upstream:
             item.headers['x-relay-upstream-status'] = str(status)
             item.headers['x-relay-final-url'] = 'https://sub.example.com/feed/'
@@ -297,6 +299,7 @@ class TransportReliabilityTests(unittest.TestCase):
             _, health = self.scraper.scrape_source(self.RELAY_SOURCE)
         self.assertGreater(get.call_count, 1)
         self.assertEqual(health['failure_kind'], 'network')
+        self.assertIn('No saved copy of this feed yet', health['error'])
 
     def test_relay_source_fetches_directly_without_relay_settings(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith('FEED_RELAY_')}

@@ -117,6 +117,10 @@ export default {
       return json({ error: 'Published feed is unavailable. Please retry shortly.' }, 503);
     }
   },
+
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    console.log(JSON.stringify({ relay_refresh: await refreshRelayCopies(env) }));
+  },
 };
 
 async function adminRoute(request: Request, env: Env, url: URL): Promise<Response> {
@@ -190,6 +194,10 @@ async function adminRoute(request: Request, env: Env, url: URL): Promise<Respons
     if (url.pathname === '/api/admin/jobs' && request.method === 'POST') {
       return await createToolJob(request, env);
     }
+    if (url.pathname === '/api/admin/relay/refresh' && request.method === 'POST') {
+      return json({ refreshed: await refreshRelayCopies(env) }, 200,
+        { 'cache-control': 'no-store' });
+    }
     const jobMatch = url.pathname.match(/^\/api\/admin\/jobs\/([a-f0-9-]+)$/);
     if (jobMatch && request.method === 'GET') return await getToolJob(env, jobMatch[1]);
     const retryMatch = url.pathname.match(/^\/api\/admin\/jobs\/([a-f0-9-]+)\/retry$/);
@@ -204,38 +212,126 @@ async function adminRoute(request: Request, env: Env, url: URL): Promise<Respons
 }
 
 // Several Substack publications return 403 to the GitHub Actions ranges the
-// scrape runs from, yet answer Cloudflare. The scraper fetches those feeds
-// through here. It is not an open proxy: it needs its own token, and it only
-// fetches endpoints of enabled sources an owner has marked relay.
-const RELAY_MAX_BYTES = 2 * 1024 * 1024;
+// scrape runs from. They also refuse this Worker while it is answering a request
+// from Actions, evidently because the caller's network carries through, yet
+// they answer the same Worker running on its own schedule (verified from
+// Chicago, Miami, Seattle, Lisbon and Singapore on 2026-09-24). So a Cron
+// Trigger saves relay feeds into D1 and the relay serves the saved copy;
+// nothing Actions asks for is fetched live.
+//
+// It is not an open proxy: it needs its own token, and it only serves endpoints
+// of enabled sources an owner has marked relay. Copies are kept as text because
+// D1 returns BLOBs as arrays of numbers, which is too slow to rebuild inside the
+// Free plan's 10 ms CPU budget for a feed approaching a megabyte.
+const RELAY_MAX_BYTES = 1_900_000; // leaves room under D1's 2,000,000-byte row limit
+const RELAY_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const RELAY_MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+const NULL_BODY_STATUSES = [204, 205, 304];
+const RELAY_HEADERS = {
+  'user-agent': 'Mozilla/5.0 (compatible; HighSignal/1.0)',
+  accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8',
+};
+
+interface RelayCopyRow {
+  status: number;
+  content_type: string;
+  final_url: string;
+  retry_after: string | null;
+  body_text: string;
+  fetched_at: string;
+}
 
 export async function relayRoute(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405, { allow: 'GET' });
   if (!await tokenMatches(request, env.FEED_RELAY_TOKEN)) {
     return json({ error: 'Relay authorization required' }, 401);
   }
-  let current: string;
+  let target: string;
   try {
-    current = validatePublicUrl(url.searchParams.get('url'), 'Relay URL');
+    target = validatePublicUrl(url.searchParams.get('url'), 'Relay URL');
   } catch (error) {
     if (error instanceof RequestError) return json({ error: error.message }, error.status);
     throw error;
   }
-  if (!relayEndpoints(await authoritativeSources(env)).has(current)) {
-    return json({ error: 'URL is not an endpoint of a relay-enabled source' }, 403);
+  let saved: RelayCopyRow | null;
+  try {
+    if (!relayEndpoints(await authoritativeSources(env)).has(target)) {
+      return json({ error: 'URL is not an endpoint of a relay-enabled source' }, 403);
+    }
+    saved = await env.DB.prepare(
+      `SELECT status, content_type, final_url, retry_after, body_text, fetched_at
+       FROM relay_copies WHERE url = ?`,
+    ).bind(target).first<RelayCopyRow>();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    return json({ error: 'Relay storage is unavailable' }, 503);
   }
-  const headers = {
-    'user-agent': request.headers.get('user-agent') || 'Mozilla/5.0 (compatible; HighSignal/1.0)',
-    accept: request.headers.get('accept') || 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8',
-  };
+  if (!saved) return json({ error: 'No saved copy of this feed yet' }, 503);
+  if (!(Date.now() - Date.parse(saved.fetched_at) <= RELAY_MAX_AGE_MS)) {
+    return json({ error: 'The saved copy of this feed is more than 3 hours old' }, 503);
+  }
+  const headers = new Headers({
+    'content-type': saved.content_type,
+    'cache-control': 'no-store',
+    'x-relay-upstream-status': String(saved.status),
+    'x-relay-final-url': saved.final_url,
+    'x-relay-fetched-at': saved.fetched_at,
+  });
+  if (saved.retry_after) headers.set('retry-after', saved.retry_after);
+  return new Response(saved.body_text, { status: saved.status, headers });
+}
+
+/** Save a fresh copy of every relay endpoint; keep the last copy on a failure. */
+export async function refreshRelayCopies(env: Env): Promise<Record<string, string>> {
+  const endpoints = [...relayEndpoints(await authoritativeSources(env))];
+  const outcome: Record<string, string> = {};
+  const fetchedAt = new Date().toISOString();
+  const writes: D1PreparedStatement[] = [];
+  for (const endpoint of endpoints) {
+    const copy = await fetchPublisher(endpoint);
+    if (typeof copy === 'string') {
+      outcome[endpoint] = `kept previous copy: ${copy}`;
+      continue;
+    }
+    writes.push(env.DB.prepare(
+      `INSERT INTO relay_copies
+       (url, status, content_type, final_url, retry_after, body_text, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (url) DO UPDATE SET status = excluded.status,
+         content_type = excluded.content_type, final_url = excluded.final_url,
+         retry_after = excluded.retry_after, body_text = excluded.body_text,
+         fetched_at = excluded.fetched_at`,
+    ).bind(endpoint, copy.status, copy.contentType, copy.finalUrl, copy.retryAfter,
+      copy.text, fetchedAt));
+    outcome[endpoint] = `saved HTTP ${copy.status}`;
+  }
+  // Forget copies of feeds that are no longer relayed.
+  writes.push(endpoints.length
+    ? env.DB.prepare(`DELETE FROM relay_copies WHERE url NOT IN (${endpoints.map(() => '?').join(', ')})`)
+      .bind(...endpoints)
+    : env.DB.prepare('DELETE FROM relay_copies'));
+  await env.DB.batch(writes);
+  return outcome;
+}
+
+interface PublisherCopy {
+  status: number;
+  contentType: string;
+  finalUrl: string;
+  retryAfter: string | null;
+  text: string;
+}
+
+/** Fetch one feed, following public redirects; a string explains a refusal. */
+async function fetchPublisher(target: string): Promise<PublisherCopy | string> {
+  let current = target;
   for (let hop = 0; hop <= RELAY_MAX_REDIRECTS; hop += 1) {
     let upstream: Response;
     try {
-      upstream = await fetch(current, { headers, redirect: 'manual' });
+      upstream = await fetch(current, { headers: RELAY_HEADERS, redirect: 'manual' });
     } catch {
-      return json({ error: 'Publisher could not be reached' }, 502);
+      return 'publisher could not be reached';
     }
     if (REDIRECT_STATUSES.includes(upstream.status)) {
       const location = upstream.headers.get('location');
@@ -243,34 +339,48 @@ export async function relayRoute(request: Request, env: Env, url: URL): Promise<
       try {
         current = validatePublicUrl(new URL(location || '', current).toString(), 'Redirect');
       } catch {
-        return json({ error: 'Publisher redirected to a local or private address' }, 502);
+        return 'publisher redirected to a local or private address';
       }
       continue;
     }
+    if (NULL_BODY_STATUSES.includes(upstream.status)) {
+      await upstream.body?.cancel();
+      return `publisher answered HTTP ${upstream.status} with no body`;
+    }
+    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const charset = /charset=([^;]+)/i.exec(contentType)?.[1]?.trim().replace(/"/g, '').toLowerCase();
+    if (charset && charset !== 'utf-8' && charset !== 'utf8') {
+      await upstream.body?.cancel();
+      return `publisher sent ${charset}, and relay copies must be UTF-8`;
+    }
     if (Number(upstream.headers.get('content-length') || 0) > RELAY_MAX_BYTES) {
       await upstream.body?.cancel();
-      return json({ error: 'Publisher response is too large' }, 502);
+      return 'publisher response is too large to save';
     }
-    const reply = new Headers({
-      'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
-      'cache-control': 'no-store',
-      'x-relay-upstream-status': String(upstream.status),
-      'x-relay-final-url': current,
-    });
-    const retryAfter = upstream.headers.get('retry-after');
-    if (retryAfter) reply.set('retry-after', retryAfter);
-    return new Response(upstream.body, { status: upstream.status, headers: reply });
+    const bytes = await upstream.arrayBuffer();
+    if (bytes.byteLength > RELAY_MAX_BYTES) return 'publisher response is too large to save';
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return 'publisher response is not valid UTF-8';
+    }
+    return { status: upstream.status, contentType, finalUrl: current,
+      retryAfter: upstream.headers.get('retry-after'), text };
   }
-  return json({ error: 'Publisher redirected too many times' }, 502);
+  return 'publisher redirected too many times';
 }
 
 export function relayEndpoints(sources: Record<string, unknown>[]): Set<string> {
   const endpoints = new Set<string>();
   for (const source of sources) {
     if (source.relay !== true || source.enabled === false) continue;
+    // Exactly what the scraper requests (source_config.source_strategies): the
+    // configured strategies, else the feed, else the page. Nothing broader.
     const strategies = Array.isArray(source.fetch_strategies) ? source.fetch_strategies : [];
-    const urls = [source.feed_url, source.url,
-      ...strategies.map((item) => (item as Record<string, unknown> | null)?.url)];
+    const urls = strategies.length
+      ? strategies.map((item) => (item as Record<string, unknown> | null)?.url || source.url)
+      : [source.feed_url || source.url];
     for (const value of urls) {
       if (typeof value !== 'string' || !value) continue;
       try { endpoints.add(new URL(value).toString()); } catch { /* not a URL */ }

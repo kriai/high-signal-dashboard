@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { canonicalCacheKey, derivedEtag, relayRoute, sortArticles, validatePublicUrl,
-  validateSource } from '../src/index.ts';
+import worker, { canonicalCacheKey, derivedEtag, refreshRelayCopies, relayRoute, sortArticles,
+  validatePublicUrl, validateSource } from '../src/index.ts';
 
 const articles = [
   { id: 'a', title: 'A', link: 'https://example.com/a', source: 'Beta',
@@ -120,20 +120,44 @@ describe('edge cache keys', () => {
 });
 
 describe('feed relay', () => {
-  const row = (config: Record<string, unknown>) => ({
-    id: String(config.name), name: config.name, config_json: JSON.stringify(config),
-    revision: 1, updated_at: '',
-  });
-  const env = {
-    FEED_RELAY_TOKEN: 'relay-secret',
-    DB: { prepare: () => ({ all: async () => ({ results: [
-      row({ name: 'Sub', url: 'https://sub.example.com/', feed_url: 'https://sub.example.com/feed', relay: true }),
-      row({ name: 'Plain', url: 'https://plain.example.com/', feed_url: 'https://plain.example.com/feed' }),
-      row({ name: 'Off', url: 'https://off.example.com/', feed_url: 'https://off.example.com/feed',
-        relay: true, enabled: false }),
-    ] }) }) },
-  } as unknown as Parameters<typeof relayRoute>[1];
-  const call = (target: string, token = 'relay-secret') => {
+  const SUB = 'https://sub.example.com/feed';
+  const configs = (): Record<string, unknown>[] => [
+    { name: 'Sub', url: 'https://sub.example.com/', feed_url: SUB, relay: true },
+    { name: 'Plain', url: 'https://plain.example.com/', feed_url: 'https://plain.example.com/feed' },
+    { name: 'Off', url: 'https://off.example.com/', feed_url: 'https://off.example.com/feed',
+      relay: true, enabled: false },
+  ];
+  // Enough of D1 for the relay: the sources listing, and relay_copies rows.
+  const fakeEnv = (sources = configs()) => {
+    const copies = new Map<string, Record<string, unknown>>();
+    const statement = (sql: string, params: unknown[] = []) => ({
+      bind: (...values: unknown[]) => statement(sql, values),
+      all: async () => ({ results: sources.map((config) => ({
+        id: config.name, name: config.name, config_json: JSON.stringify(config),
+        revision: 1, updated_at: '' })) }),
+      first: async () => copies.get(String(params[0])) ?? null,
+      run: async () => {
+        if (sql.startsWith('INSERT INTO relay_copies')) {
+          const [url, status, content_type, final_url, retry_after, body_text, fetched_at] = params;
+          copies.set(String(url), { status, content_type, final_url, retry_after, body_text, fetched_at });
+        } else if (sql.startsWith('DELETE FROM relay_copies')) {
+          for (const key of [...copies.keys()]) if (!params.includes(key)) copies.delete(key);
+        }
+        return { success: true };
+      },
+    });
+    const DB = {
+      prepare: (sql: string) => statement(sql.replace(/\s+/g, ' ').trim()),
+      batch: async (list: { run: () => Promise<unknown> }[]) => {
+        for (const item of list) await item.run();
+        return [];
+      },
+    };
+    const env = { FEED_RELAY_TOKEN: 'relay-secret', ADMIN_API_TOKEN: 'admin-secret', DB } as
+      unknown as Parameters<typeof relayRoute>[1];
+    return { env, copies, sources };
+  };
+  const call = (env: Parameters<typeof relayRoute>[1], target: string, token = 'relay-secret') => {
     const url = new URL(`https://site.example/api/relay/feed?url=${encodeURIComponent(target)}`);
     return relayRoute(new Request(url, { headers: { authorization: `Bearer ${token}` } }), env, url);
   };
@@ -146,59 +170,123 @@ describe('feed relay', () => {
       requested.push(target);
       assert.equal(init?.redirect, 'manual');
       const route = routes[target];
-      if (!route) throw new Error(`unexpected fetch ${target}`);
+      if (!route) throw new Error(`unreachable ${target}`);
       return route();
     }) as typeof fetch;
   };
+  const rss = (status = 200, headers: Record<string, string> = {}) => () =>
+    new Response('<rss>entries</rss>', { status,
+      headers: { 'content-type': 'application/rss+xml; charset=utf-8', ...headers } });
   afterEach(() => { globalThis.fetch = realFetch; });
 
-  it('refuses a missing or wrong token before touching the network', async () => {
+  it('refuses a missing or wrong token, and URLs of sources not marked relay', async () => {
+    const { env } = fakeEnv();
     serve({});
-    assert.equal((await call('https://sub.example.com/feed', 'nope')).status, 401);
-    assert.deepEqual(requested, []);
-  });
-
-  it('only fetches endpoints of enabled sources marked relay', async () => {
-    serve({});
-    for (const target of ['https://plain.example.com/feed', 'https://off.example.com/feed',
-      'https://unrelated.example.org/anything']) {
-      const reply = await call(target);
+    assert.equal((await call(env, SUB, 'nope')).status, 401);
+    // The relay source's own homepage is not an endpoint the scraper fetches.
+    for (const target of ['https://sub.example.com/', 'https://plain.example.com/feed',
+      'https://off.example.com/feed', 'https://unrelated.example.org/anything']) {
+      const reply = await call(env, target);
       assert.equal(reply.status, 403, target);
       assert.equal(reply.headers.get('x-relay-upstream-status'), null);
     }
-    assert.equal((await call('http://127.0.0.1/feed')).status, 400);
+    assert.equal((await call(env, 'http://127.0.0.1/feed')).status, 400);
     assert.deepEqual(requested, []);
   });
 
-  it("passes the publisher's status and body through, marked as upstream", async () => {
-    serve({ 'https://sub.example.com/feed': () => new Response('<rss/>', {
-      status: 200, headers: { 'content-type': 'application/rss+xml' } }) });
-    const ok = await call('https://sub.example.com/feed');
-    assert.equal(ok.status, 200);
-    assert.equal(await ok.text(), '<rss/>');
-    assert.equal(ok.headers.get('x-relay-upstream-status'), '200');
-    assert.equal(ok.headers.get('x-relay-final-url'), 'https://sub.example.com/feed');
+  it('saves relay feeds on a schedule and serves the copy without fetching', async () => {
+    const { env } = fakeEnv();
+    serve({ [SUB]: rss(200, { 'retry-after': '60' }) });
+    const outcome = await refreshRelayCopies(env);
+    assert.deepEqual(outcome, { [SUB]: 'saved HTTP 200' });
+    assert.deepEqual(requested, [SUB]);
 
-    serve({ 'https://sub.example.com/feed': () => new Response('no', { status: 403 }) });
-    const blocked = await call('https://sub.example.com/feed');
-    assert.equal(blocked.status, 403);
-    assert.equal(blocked.headers.get('x-relay-upstream-status'), '403');
+    serve({});
+    const reply = await call(env, SUB);
+    assert.equal(reply.status, 200);
+    assert.equal(await reply.text(), '<rss>entries</rss>');
+    assert.equal(reply.headers.get('x-relay-upstream-status'), '200');
+    assert.equal(reply.headers.get('x-relay-final-url'), SUB);
+    assert.equal(reply.headers.get('retry-after'), '60');
+    assert.ok(reply.headers.get('x-relay-fetched-at'));
+    assert.deepEqual(requested, [], 'a relay read must never fetch the publisher');
   });
 
-  it('follows public redirects and refuses private ones', async () => {
-    serve({
-      'https://sub.example.com/feed': () => new Response(null, {
-        status: 301, headers: { location: '/feed/' } }),
-      'https://sub.example.com/feed/': () => new Response('<rss/>', { status: 200 }),
-    });
-    const moved = await call('https://sub.example.com/feed');
-    assert.equal(moved.headers.get('x-relay-final-url'), 'https://sub.example.com/feed/');
+  it("serves the publisher's own refusal as upstream, so it reads as blocked", async () => {
+    const { env } = fakeEnv();
+    serve({ [SUB]: rss(403) });
+    await refreshRelayCopies(env);
+    const reply = await call(env, SUB);
+    assert.equal(reply.status, 403);
+    assert.equal(reply.headers.get('x-relay-upstream-status'), '403');
+  });
 
-    serve({ 'https://sub.example.com/feed': () => new Response(null, {
-      status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data' } }) });
-    const unsafe = await call('https://sub.example.com/feed');
-    assert.equal(unsafe.status, 502);
-    assert.equal(unsafe.headers.get('x-relay-upstream-status'), null);
-    assert.deepEqual(requested, ['https://sub.example.com/feed']);
+  it('answers 503, not a publisher status, with no copy or a copy over 3 hours old', async () => {
+    const { env, copies } = fakeEnv();
+    const empty = await call(env, SUB);
+    assert.equal(empty.status, 503);
+    assert.equal(empty.headers.get('x-relay-upstream-status'), null);
+
+    serve({ [SUB]: rss() });
+    await refreshRelayCopies(env);
+    copies.get(SUB)!.fetched_at = new Date(Date.now() - 3 * 60 * 60 * 1000 - 1000).toISOString();
+    const stale = await call(env, SUB);
+    assert.equal(stale.status, 503);
+    assert.match((await stale.json() as { error: string }).error, /more than 3 hours/);
+  });
+
+  it('keeps the previous copy when a refresh cannot get a usable answer', async () => {
+    const { env, copies } = fakeEnv();
+    serve({ [SUB]: rss() });
+    await refreshRelayCopies(env);
+    const saved = { ...copies.get(SUB) };
+    const refusals: Record<string, () => Response>[] = [
+      { [SUB]: () => new Response(null, { status: 302,
+        headers: { location: 'http://169.254.169.254/latest/meta-data' } }) },
+      { [SUB]: () => new Response('x', { headers: { 'content-type': 'text/xml; charset=iso-8859-1' } }) },
+      { [SUB]: () => new Response(new Uint8Array([0xff, 0xfe, 0xfd]), {
+        headers: { 'content-type': 'text/xml' } }) },
+      { [SUB]: () => new Response('x', { headers: { 'content-length': '5000000' } }) },
+      {},
+    ];
+    for (const routes of refusals) {
+      serve(routes);
+      const outcome = await refreshRelayCopies(env);
+      assert.match(outcome[SUB], /^kept previous copy/);
+      assert.deepEqual(copies.get(SUB), saved);
+    }
+    assert.deepEqual(requested, [SUB], 'the private redirect target is never requested');
+  });
+
+  it('follows public redirects and records where the feed ended up', async () => {
+    const { env, copies } = fakeEnv();
+    serve({
+      [SUB]: () => new Response(null, { status: 301, headers: { location: '/feed/' } }),
+      'https://sub.example.com/feed/': rss(),
+    });
+    await refreshRelayCopies(env);
+    assert.equal(copies.get(SUB)!.final_url, 'https://sub.example.com/feed/');
+  });
+
+  it('forgets the copy once a source is no longer relayed', async () => {
+    const { env, copies, sources } = fakeEnv();
+    serve({ [SUB]: rss() });
+    await refreshRelayCopies(env);
+    assert.ok(copies.has(SUB));
+    sources[0].relay = false;
+    serve({});
+    assert.deepEqual(await refreshRelayCopies(env), {});
+    assert.equal(copies.size, 0);
+  });
+
+  it('lets only the owner refresh copies on demand', async () => {
+    const { env } = fakeEnv();
+    serve({ [SUB]: rss() });
+    const ask = (token: string) => worker.fetch(new Request('https://site.example/api/admin/relay/refresh', {
+      method: 'POST', headers: { authorization: `Bearer ${token}` } }), env, {} as ExecutionContext);
+    assert.equal((await ask('relay-secret')).status, 401);
+    const reply = await ask('admin-secret');
+    assert.equal(reply.status, 200);
+    assert.deepEqual(await reply.json(), { refreshed: { [SUB]: 'saved HTTP 200' } });
   });
 });

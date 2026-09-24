@@ -30,6 +30,10 @@
       "vars": {
         "GITHUB_REPOSITORY": "kriai/high-signal-dashboard",
         "GITHUB_WORKFLOW_REF": "main"
+      },
+      // Saves relay-enabled feeds into D1 for /api/relay/feed to serve.
+      "triggers": {
+        "crons": ["*/30 * * * *"]
       }
     }
   },
