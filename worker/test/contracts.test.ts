@@ -132,14 +132,20 @@ describe('feed relay', () => {
     const copies = new Map<string, Record<string, unknown>>();
     const statement = (sql: string, params: unknown[] = []) => ({
       bind: (...values: unknown[]) => statement(sql, values),
-      all: async () => ({ results: sources.map((config) => ({
-        id: config.name, name: config.name, config_json: JSON.stringify(config),
-        revision: 1, updated_at: '' })) }),
+      all: async () => ({ results: sql.includes('FROM relay_copies')
+        ? [...copies].map(([url, copy]) => ({ url, ...copy }))
+        : sources.map((config) => ({
+          id: config.name, name: config.name, config_json: JSON.stringify(config),
+          revision: 1, updated_at: '' })) }),
       first: async () => copies.get(String(params[0])) ?? null,
       run: async () => {
         if (sql.startsWith('INSERT INTO relay_copies')) {
-          const [url, status, content_type, final_url, retry_after, body_text, fetched_at] = params;
-          copies.set(String(url), { status, content_type, final_url, retry_after, body_text, fetched_at });
+          const [url, status, content_type, final_url, retry_after, body_text, fetched_at,
+            etag, last_modified] = params;
+          copies.set(String(url), { status, content_type, final_url, retry_after, body_text,
+            fetched_at, etag, last_modified });
+        } else if (sql.startsWith('UPDATE relay_copies SET fetched_at')) {
+          copies.get(String(params[1]))!.fetched_at = params[0];
         } else if (sql.startsWith('DELETE FROM relay_copies')) {
           for (const key of [...copies.keys()]) if (!params.includes(key)) copies.delete(key);
         }
@@ -163,11 +169,14 @@ describe('feed relay', () => {
   };
   const realFetch = globalThis.fetch;
   let requested: string[] = [];
+  let sentHeaders: Record<string, string>[] = [];
   const serve = (routes: Record<string, () => Response>) => {
     requested = [];
+    sentHeaders = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const target = String(input);
       requested.push(target);
+      sentHeaders.push({ ...(init?.headers as Record<string, string>) });
       assert.equal(init?.redirect, 'manual');
       const route = routes[target];
       if (!route) throw new Error(`unreachable ${target}`);
@@ -228,6 +237,51 @@ describe('feed relay', () => {
       '<description>Short one</description></item>' +
       '<item><title>Two</title><link>https://sub.example.com/p/two</link></item>' +
       '</channel></rss>');
+  });
+
+  it('asks "changed since?" and only renews the timestamp on a 304', async () => {
+    const { env, copies } = fakeEnv();
+    serve({ [SUB]: rss(200, { etag: 'W/"v1"', 'last-modified': 'Wed, 23 Sep 2026 10:00:00 GMT' }) });
+    await refreshRelayCopies(env);
+    const first = { ...copies.get(SUB) };
+    copies.get(SUB)!.fetched_at = '2026-09-24T09:00:00.000Z';
+
+    serve({ [SUB]: () => new Response(null, { status: 304 }) });
+    assert.deepEqual(await refreshRelayCopies(env), { [SUB]: 'unchanged' });
+    assert.equal(sentHeaders[0]['if-none-match'], 'W/"v1"');
+    assert.equal(sentHeaders[0]['if-modified-since'], 'Wed, 23 Sep 2026 10:00:00 GMT');
+    const after = copies.get(SUB)!;
+    assert.equal(after.body_text, first.body_text);
+    assert.equal(after.etag, 'W/"v1"');
+    assert.ok(String(after.fetched_at) > '2026-09-24T09:00:00.000Z');
+  });
+
+  it('never lets a rate limit or server error replace a saved copy', async () => {
+    const { env, copies } = fakeEnv();
+    serve({ [SUB]: rss(429) });
+    await refreshRelayCopies(env);
+    assert.equal(copies.get(SUB)!.status, 429, 'with no copy yet, the reason is kept');
+
+    serve({ [SUB]: rss(200, { etag: 'W/"v1"' }) });
+    await refreshRelayCopies(env);
+    for (const status of [429, 503, 408]) {
+      serve({ [SUB]: rss(status) });
+      assert.match((await refreshRelayCopies(env))[SUB], new RegExp(`kept previous copy.*${status}`));
+      assert.equal(copies.get(SUB)!.status, 200);
+    }
+  });
+
+  it('lets a real refusal replace the copy, then stops asking "changed since?"', async () => {
+    const { env, copies } = fakeEnv();
+    serve({ [SUB]: rss(200, { etag: 'W/"v1"' }) });
+    await refreshRelayCopies(env);
+    serve({ [SUB]: rss(403) });
+    await refreshRelayCopies(env);
+    assert.equal(copies.get(SUB)!.status, 403);
+    serve({ [SUB]: rss(200) });
+    await refreshRelayCopies(env);
+    assert.equal(sentHeaders[0]['if-none-match'], undefined);
+    assert.equal(copies.get(SUB)!.status, 200);
   });
 
   it("serves the publisher's own refusal as upstream, so it reads as blocked", async () => {

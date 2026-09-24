@@ -297,6 +297,12 @@ python scripts/audit_sources.py --d1 --source "The Information"
   - Copies are stored as UTF-8 text, because D1 returns BLOBs as arrays of
     numbers, which are slow to rebuild. A feed that isn't UTF-8, or is over
     1.9 MB before trimming, is not saved.
+  - The timer asks "changed since?" using the feed's ETag and Last-Modified,
+    so most runs get a bodiless 304 and only renew the copy's timestamp.
+    Newsletters change about daily, while the timer runs 48 times a day.
+  - A rate limit (429), timeout (408) or server error (5xx) never replaces a
+    saved copy, because it is temporary. A real refusal such as a 403 does,
+    so a new block still shows up as `blocked`.
   - After marking a source relay, `POST /api/admin/relay/refresh` with the
     owner token fills its copy immediately instead of waiting for the timer.
   - Cost on the Free plan: 4 feeds × 48 runs is about 200 D1 rows written a

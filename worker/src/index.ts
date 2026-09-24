@@ -291,25 +291,43 @@ export async function relayRoute(request: Request, env: Env, url: URL): Promise<
 /** Save a fresh copy of every relay endpoint; keep the last copy on a failure. */
 export async function refreshRelayCopies(env: Env): Promise<Record<string, string>> {
   const endpoints = [...relayEndpoints(await authoritativeSources(env))];
+  const saved = new Map((await env.DB.prepare(
+    'SELECT url, status, etag, last_modified FROM relay_copies',
+  ).all<SavedValidators>()).results.map((row) => [row.url, row]));
   const outcome: Record<string, string> = {};
   const fetchedAt = new Date().toISOString();
   const writes: D1PreparedStatement[] = [];
   for (const endpoint of endpoints) {
-    const copy = await fetchPublisher(endpoint);
+    const previous = saved.get(endpoint);
+    // Ask "changed since?" only about a good copy, so a 304 always confirms one.
+    const copy = await fetchPublisher(endpoint, previous?.status === 200 ? previous : undefined);
+    if (copy === NOT_MODIFIED) {
+      writes.push(env.DB.prepare('UPDATE relay_copies SET fetched_at = ? WHERE url = ?')
+        .bind(fetchedAt, endpoint));
+      outcome[endpoint] = 'unchanged';
+      continue;
+    }
     if (typeof copy === 'string') {
       outcome[endpoint] = `kept previous copy: ${copy}`;
       continue;
     }
+    // A rate limit or server error is temporary; it must not replace a copy that
+    // may still be good. With no copy yet, saving it at least shows the reason.
+    if (previous && isTransientStatus(copy.status)) {
+      outcome[endpoint] = `kept previous copy: publisher answered HTTP ${copy.status}`;
+      continue;
+    }
     writes.push(env.DB.prepare(
       `INSERT INTO relay_copies
-       (url, status, content_type, final_url, retry_after, body_text, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       (url, status, content_type, final_url, retry_after, body_text, fetched_at, etag, last_modified)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (url) DO UPDATE SET status = excluded.status,
          content_type = excluded.content_type, final_url = excluded.final_url,
          retry_after = excluded.retry_after, body_text = excluded.body_text,
-         fetched_at = excluded.fetched_at`,
+         fetched_at = excluded.fetched_at, etag = excluded.etag,
+         last_modified = excluded.last_modified`,
     ).bind(endpoint, copy.status, copy.contentType, copy.finalUrl, copy.retryAfter,
-      copy.text, fetchedAt));
+      copy.text, fetchedAt, copy.etag, copy.lastModified));
     outcome[endpoint] = `saved HTTP ${copy.status}`;
   }
   // Forget copies of feeds that are no longer relayed.
@@ -321,23 +339,45 @@ export async function refreshRelayCopies(env: Env): Promise<Record<string, strin
   return outcome;
 }
 
+interface SavedValidators {
+  url: string;
+  status: number;
+  etag: string | null;
+  last_modified: string | null;
+}
+
+const NOT_MODIFIED = Symbol('not modified');
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 interface PublisherCopy {
   status: number;
   contentType: string;
   finalUrl: string;
   retryAfter: string | null;
   text: string;
+  etag: string | null;
+  lastModified: string | null;
 }
 
 /** Fetch one feed, following public redirects; a string explains a refusal. */
-async function fetchPublisher(target: string): Promise<PublisherCopy | string> {
+async function fetchPublisher(target: string, validators?: SavedValidators):
+    Promise<PublisherCopy | typeof NOT_MODIFIED | string> {
+  const headers: Record<string, string> = { ...RELAY_HEADERS };
+  if (validators?.etag) headers['if-none-match'] = validators.etag;
+  if (validators?.last_modified) headers['if-modified-since'] = validators.last_modified;
   let current = target;
   for (let hop = 0; hop <= RELAY_MAX_REDIRECTS; hop += 1) {
     let upstream: Response;
     try {
-      upstream = await fetch(current, { headers: RELAY_HEADERS, redirect: 'manual' });
+      upstream = await fetch(current, { headers, redirect: 'manual' });
     } catch {
       return 'publisher could not be reached';
+    }
+    if (upstream.status === 304 && validators) {
+      await upstream.body?.cancel();
+      return NOT_MODIFIED;
     }
     if (REDIRECT_STATUSES.includes(upstream.status)) {
       const location = upstream.headers.get('location');
@@ -373,7 +413,8 @@ async function fetchPublisher(target: string): Promise<PublisherCopy | string> {
     }
     return { status: upstream.status, contentType, finalUrl: current,
       retryAfter: upstream.headers.get('retry-after'),
-      text: text.replace(FULL_POST_BODIES, '') };
+      text: text.replace(FULL_POST_BODIES, ''),
+      etag: upstream.headers.get('etag'), lastModified: upstream.headers.get('last-modified') };
   }
   return 'publisher redirected too many times';
 }
