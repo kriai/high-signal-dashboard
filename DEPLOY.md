@@ -157,6 +157,7 @@ store or malformed JSON stops the job without overwriting saved state.
 | `SCRAPE_BUDGET_SECONDS` | 600 | Wall-clock cap on the listing pass. Sources the deadline cuts off are recorded as unvisited and keep their retained articles rather than counting as failures |
 | `SCRAPE_MIN_SOURCE_COVERAGE` | 0.5 | Share of enabled sources that must succeed *in this run* before the scrape may replace the active publication, rounded up. Clamped to 0–1; a run where every enabled source failed is rejected at any setting |
 | `SCRAPE_REPORT_PATH` | — | Writes a per-source JSON diagnostic report to this path, including rejected runs. The scrape workflow sets it and uploads the file as an artifact |
+| `FEED_RELAY_URL` / `FEED_RELAY_TOKEN` | — | Sources marked `"relay": true` fetch through the Worker's `/api/relay/feed` instead of directly. Both must be set; otherwise those sources fetch directly, as on a laptop. The workflows derive the URL from `PUBLIC_ORIGIN` and read the token from the `FEED_RELAY_TOKEN` repository secret; the Worker needs the same value as its `FEED_RELAY_TOKEN` secret |
 
 Scrape frequency lives in `.github/workflows/scrape.yml`.
 
@@ -264,9 +265,20 @@ python scripts/audit_sources.py --d1 --source "The Information"
   its last good batch for `retention_hours` (72 by default, per-source, 0–168)
   with `is_stale` set on those rows, instead of dropping off the dashboard
   immediately. Health still reports the failure and the retained count; stale
-  content is never presented as a fresh success. Genuinely fixing the access
-  needs an egress proxy with residential IPs, or running the job somewhere other
-  than Actions.
+  content is never presented as a fresh success.
+
+  For Substack there is a free way round it. Its feeds answer Cloudflare, so a
+  source marked `"relay": true` fetches through the Worker's `/api/relay/feed`
+  (health shows `transport: relay`). The relay is not an open proxy: it needs
+  its own token, separate from `ADMIN_API_TOKEN`, and it fetches only the
+  endpoints of enabled sources marked relay in D1. It is still the public feed
+  an RSS reader gets, at the same rate. Substack could extend the block to
+  Cloudflare; if it does, those sources fall back to bounded stale retention
+  like any other failure.
+
+  Several non-Substack sites (Import AI, Stratechery) blocked only their
+  homepage from Actions. Their RSS feeds answer normally, so those sources read
+  the feed instead.
 - **Published health is the last *published* health.** If a run trips the
   `SCRAPE_MIN_SOURCE_COVERAGE` gate, the whole previous publication stays
   active — including its health table — and the job exits nonzero. The current

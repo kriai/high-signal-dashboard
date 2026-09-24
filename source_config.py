@@ -14,7 +14,7 @@ EDITABLE_FIELDS = (
     'url', 'category', 'selector', 'fallback', 'selectors', 'tier', 'limit',
     'retries', 'enabled', 'lock_category', 'type', 'feed_url',
     'fetch_strategies', 'retention_hours', 'allow_empty', 'allowed_hosts',
-    'path_prefixes', 'note',
+    'path_prefixes', 'note', 'relay',
 )
 BLOCKED_HOSTS = ('localhost', 'localhost.localdomain',
                  'metadata.google.internal')
@@ -245,6 +245,9 @@ def normalize_source(payload, existing=None, strict_selectors=False):
         source.get('lock_category'), 'lock_category', False)
     source['allow_empty'] = _boolean(
         source.get('allow_empty'), 'allow_empty', False)
+    # Transport only: which network the request leaves from, not what is
+    # extracted, so it stays out of the config fingerprint.
+    source['relay'] = _boolean(source.get('relay'), 'relay', False)
 
     feed_url = str(source.get('feed_url') or '').strip()
     if feed_url:

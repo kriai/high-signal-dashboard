@@ -239,6 +239,83 @@ class TransportReliabilityTests(unittest.TestCase):
         self.assertEqual(len(articles), 1)
         self.assertEqual(health['rejected_counts']['item_error'], 1)
 
+    RELAY_ENV = {'FEED_RELAY_URL': 'https://site.example/api/relay/feed',
+                 'FEED_RELAY_TOKEN': 'relay-secret'}
+    RELAY_SOURCE = dict(SOURCE, type='rss', feed_url='https://sub.example.com/feed',
+                        url='https://sub.example.com/', relay=True)
+    RELAY_FEED = '''<rss version="2.0"><channel>
+      <item><title>Researchers release a new model</title>
+        <link>https://sub.example.com/p/model</link></item>
+    </channel></rss>'''
+
+    def relayed(self, status, text='', upstream=True):
+        item = response(status, text, 'https://site.example/api/relay/feed',
+                        'application/rss+xml')
+        if upstream:
+            item.headers['x-relay-upstream-status'] = str(status)
+            item.headers['x-relay-final-url'] = 'https://sub.example.com/feed/'
+        return item
+
+    def test_relay_source_fetches_through_the_worker(self):
+        with patch.dict(os.environ, self.RELAY_ENV), \
+                patch.object(self.scraper.scraper, 'get',
+                             return_value=self.relayed(200, self.RELAY_FEED)) as get:
+            articles, health = self.scraper.scrape_source(self.RELAY_SOURCE)
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(get.call_args.args[0],
+                         'https://site.example/api/relay/feed'
+                         '?url=https%3A%2F%2Fsub.example.com%2Ffeed')
+        self.assertEqual(get.call_args.kwargs['headers']['Authorization'],
+                         'Bearer relay-secret')
+        self.assertEqual([a['link'] for a in articles], ['https://sub.example.com/p/model'])
+        self.assertEqual(health['state'], 'ok')
+        self.assertEqual(health['transport'], 'relay')
+        self.assertEqual(health['final_url'], 'https://sub.example.com/feed/')
+
+    def test_publisher_block_through_relay_is_still_blocked(self):
+        with patch.dict(os.environ, self.RELAY_ENV), \
+                patch.object(self.scraper.scraper, 'get',
+                             return_value=self.relayed(403)) as get:
+            _, health = self.scraper.scrape_source(self.RELAY_SOURCE)
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(health['failure_kind'], 'blocked')
+        self.assertEqual(health['transport'], 'relay')
+
+    def test_relay_refusal_is_not_reported_as_a_publisher_block(self):
+        with patch.dict(os.environ, self.RELAY_ENV), \
+                patch.object(self.scraper.scraper, 'get',
+                             return_value=self.relayed(403, upstream=False)):
+            _, health = self.scraper.scrape_source(self.RELAY_SOURCE)
+        self.assertEqual(health['failure_kind'], 'invalid_config')
+        self.assertIn('Feed relay refused', health['error'])
+
+    def test_relay_outage_is_a_retryable_network_failure(self):
+        with patch.dict(os.environ, self.RELAY_ENV), \
+                patch.object(self.scraper.scraper, 'get',
+                             return_value=self.relayed(502, upstream=False)) as get, \
+                patch('scraper.time.sleep'):
+            _, health = self.scraper.scrape_source(self.RELAY_SOURCE)
+        self.assertGreater(get.call_count, 1)
+        self.assertEqual(health['failure_kind'], 'network')
+
+    def test_relay_source_fetches_directly_without_relay_settings(self):
+        env = {k: v for k, v in os.environ.items() if not k.startswith('FEED_RELAY_')}
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(self.scraper.scraper, 'get', return_value=response(
+                    200, self.RELAY_FEED, 'https://sub.example.com/feed',
+                    'application/rss+xml')) as get:
+            articles, health = self.scraper.scrape_source(self.RELAY_SOURCE)
+        self.assertEqual(get.call_args.args[0], 'https://sub.example.com/feed')
+        self.assertNotIn('Authorization', get.call_args.kwargs['headers'])
+        self.assertEqual(len(articles), 1)
+        self.assertEqual(health['transport'], 'direct')
+
+    def test_relay_flag_does_not_discard_retained_articles(self):
+        from source_config import config_fingerprint
+        self.assertEqual(
+            config_fingerprint(normalize_source(self.RELAY_SOURCE)),
+            config_fingerprint(normalize_source(dict(self.RELAY_SOURCE, relay=False))))
+
     def test_feed_deduplicates_before_applying_limit(self):
         source = dict(SOURCE, type='rss', feed_url='https://example.com/feed',
                       limit=2)

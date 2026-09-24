@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import time
 import random
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 import re
 
 from source_config import (SourceConfigError, config_fingerprint,
@@ -25,6 +25,19 @@ LISTING_FETCH_LIMIT = 2 * 1024 * 1024
 SOURCE_BUDGET_SECONDS = 45
 SOURCE_REQUEST_LIMIT = 5
 DEFAULT_RETENTION_HOURS = 72
+
+
+def feed_relay_settings():
+    """The Worker relay for publishers that refuse datacenter addresses.
+
+    Several Substack publications answer a laptop or Cloudflare but return 403 to
+    the GitHub Actions ranges the scheduled scrape runs from. A source marked
+    relay fetches through the Worker when both settings are present, and
+    directly otherwise, so local runs are unaffected.
+    """
+    url = (os.environ.get('FEED_RELAY_URL') or '').strip()
+    token = (os.environ.get('FEED_RELAY_TOKEN') or '').strip()
+    return (url, token) if url and token else None
 
 
 def utc_now():
@@ -1272,6 +1285,8 @@ class HighSignalScraper:
         content_type = None
         blocked_hosts = set()
         blocked_urls = set()
+        relay = feed_relay_settings() if source.get('relay') else None
+        transport = 'relay' if relay else 'direct'
 
         for strategy in source_strategies(source):
             last_strategy = strategy
@@ -1291,11 +1306,15 @@ class HighSignalScraper:
                     if strategy['type'] not in ('rss', 'json'):
                         headers = {'User-Agent': random.choice(self.user_agents)}
                     remaining = max(0.1, source_deadline - time.monotonic())
-                    response = self._request_with_safe_redirects(
-                        fetch_url, headers,
-                        timeout=(min(5, remaining), min(10, remaining)),
-                        request_limit=SOURCE_REQUEST_LIMIT - attempts,
-                        counter=request_counter)
+                    limits = {'timeout': (min(5, remaining), min(10, remaining)),
+                              'request_limit': SOURCE_REQUEST_LIMIT - attempts,
+                              'counter': request_counter}
+                    if relay:
+                        response = self._request_via_relay(
+                            fetch_url, headers, relay=relay, **limits)
+                    else:
+                        response = self._request_with_safe_redirects(
+                            fetch_url, headers, **limits)
                     attempts += request_counter[0]
                     request_counter[0] = 0
                     http_status = response.status_code
@@ -1407,7 +1426,7 @@ class HighSignalScraper:
                             fetch_url=fetch_url, final_url=final_url,
                             strategy_id=strategy['id'], diagnostics=diagnostics,
                             response_bytes=response_bytes,
-                            content_type=content_type)
+                            content_type=content_type, transport=transport)
                     # Parsing the same body again cannot change the result.
                     break
                 except OverflowError as exc:
@@ -1462,7 +1481,7 @@ class HighSignalScraper:
             final_url=final_url,
             strategy_id=(last_strategy or {}).get('id'),
             diagnostics=last_diagnostics, response_bytes=response_bytes,
-            content_type=content_type)
+            content_type=content_type, transport=transport)
 
     @staticmethod
     def _read_listing_body(response):
@@ -1524,6 +1543,31 @@ class HighSignalScraper:
                 raise requests.TooManyRedirects('Source redirect limit exceeded')
             current = next_url
 
+    def _request_via_relay(self, url, headers, timeout, request_limit, counter,
+                           relay):
+        """Fetch url through the Worker relay, which follows publisher redirects.
+
+        The relay answers with the publisher's own status and body, marked by
+        x-relay-upstream-status, so the normal status handling applies. A reply
+        without that header is the relay's own refusal or failure, and must not
+        be mistaken for the publisher blocking the scrape.
+        """
+        relay_url, token = relay
+        joiner = '&' if '?' in relay_url else '?'
+        response = self._request_with_safe_redirects(
+            f'{relay_url}{joiner}url={quote(url, safe="")}',
+            dict(headers, Authorization=f'Bearer {token}'),
+            timeout, request_limit, counter)
+        if response.headers.get('x-relay-upstream-status'):
+            response.url = response.headers.get('x-relay-final-url') or url
+            return response
+        status = response.status_code
+        self._close_response(response)
+        if status in (401, 403, 404):
+            raise SourceConfigError(f'Feed relay refused the request (HTTP {status})')
+        raise requests.ConnectionError(
+            f'Feed relay could not reach the publisher (HTTP {status})')
+
     @staticmethod
     def _response_peer_address(response):
         raw = getattr(response, 'raw', None)
@@ -1573,7 +1617,7 @@ class HighSignalScraper:
                       attempts, started, failure_kind=None, attempted=True,
                       fetch_url=None, final_url=None, strategy_id=None,
                       diagnostics=None, response_bytes=0, content_type=None,
-                      retained_articles=0):
+                      retained_articles=0, transport=None):
         """Build one source's health row, carrying its last success forward."""
         name = source.get('name') or 'Invalid source'
         previous = self.health.get(name, {})
@@ -1614,6 +1658,7 @@ class HighSignalScraper:
                 if diagnostics.get('used_generic_fallback') else []),
             'response_bytes': response_bytes,
             'content_type': content_type,
+            'transport': transport,
             'retained_articles': retained_articles,
         }
 

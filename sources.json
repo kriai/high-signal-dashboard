@@ -17,7 +17,9 @@
       "tier": "medium",
       "category": "Models & Releases",
       "enabled": true,
-      "feed_url": "https://www.bensbites.com/feed"
+      "feed_url": "https://www.bensbites.com/feed",
+      "relay": true,
+      "note": "Fetched through the Worker relay: the feed returns HTTP 403 to GitHub Actions but 200 from Cloudflare, verified on 2026-09-24."
     },
     {
       "name": "AI Breakfast",
@@ -40,17 +42,21 @@
       "allowed_hosts": [
         "lastweekin.ai"
       ],
-      "note": "Publisher-advertised RSS feed, verified with 15 usable entries on 2026-09-10."
+      "note": "Fetched through the Worker relay: the feed returns HTTP 403 to GitHub Actions but 200 from Cloudflare, verified on 2026-09-24.",
+      "relay": true
     },
     {
       "name": "Import AI (Jack Clark)",
       "url": "https://jack-clark.net/",
-      "type": "static",
+      "type": "rss",
       "tier": "high",
       "category": "AI Research",
       "enabled": true,
-      "selector": "article h2 a, .entry-title a, h2 a",
-      "fallback": ".post-title a"
+      "feed_url": "https://jack-clark.net/feed/",
+      "allowed_hosts": [
+        "jack-clark.net"
+      ],
+      "note": "Publisher RSS feed, verified from GitHub Actions with 10 usable entries on 2026-09-24; the homepage returned HTTP 403 from Actions."
     },
     {
       "name": "The Algorithm (MIT Tech Review)",
@@ -68,7 +74,9 @@
       "tier": "medium",
       "category": "AI Research",
       "enabled": true,
-      "feed_url": "https://www.deeplearningweekly.com/feed"
+      "feed_url": "https://www.deeplearningweekly.com/feed",
+      "relay": true,
+      "note": "Fetched through the Worker relay: the feed returns HTTP 403 to GitHub Actions but 200 from Cloudflare, verified on 2026-09-24."
     },
     {
       "name": "AI Weekly",
@@ -87,7 +95,9 @@
       "tier": "low",
       "category": "AI Research",
       "enabled": true,
-      "feed_url": "https://machinelearning.substack.com/feed"
+      "feed_url": "https://machinelearning.substack.com/feed",
+      "relay": true,
+      "note": "Fetched through the Worker relay: the feed returns HTTP 403 to GitHub Actions but 200 from Cloudflare, verified on 2026-09-24."
     },
     {
       "name": "State of AI",
@@ -113,12 +123,15 @@
     {
       "name": "Stratechery",
       "url": "https://stratechery.com/",
-      "type": "static",
+      "type": "rss",
       "tier": "high",
       "category": "Business & Markets",
       "enabled": true,
-      "selector": "article h2 a, .entry-title a, h2 a",
-      "fallback": ".post-title a"
+      "feed_url": "https://stratechery.com/feed/",
+      "allowed_hosts": [
+        "stratechery.com"
+      ],
+      "note": "Publisher RSS feed, verified from GitHub Actions with 10 usable entries on 2026-09-24; the homepage returned HTTP 403 from Actions."
     },
     {
       "name": "Exploding Topics",

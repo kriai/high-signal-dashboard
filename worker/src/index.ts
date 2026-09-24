@@ -6,6 +6,7 @@ interface Env {
   GITHUB_REPOSITORY?: string;
   GITHUB_WORKFLOW_REF?: string;
   GITHUB_DISPATCH_DISABLED?: string;
+  FEED_RELAY_TOKEN?: string;
 }
 
 interface Article {
@@ -78,6 +79,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/admin/')) {
       return await adminRoute(request, env, url);
+    }
+    if (url.pathname === '/api/relay/feed') {
+      return await relayRoute(request, env, url);
     }
     if (request.method !== 'GET' && !(request.method === 'POST' && url.pathname === '/api/refresh')) {
       return json({ error: 'Method not allowed' }, 405, { allow: 'GET' });
@@ -197,6 +201,82 @@ async function adminRoute(request: Request, env: Env, url: URL): Promise<Respons
     console.error(error instanceof Error ? error.message : error);
     return json({ error: 'Owner request failed' }, 500);
   }
+}
+
+// Several Substack publications return 403 to the GitHub Actions ranges the
+// scrape runs from, yet answer Cloudflare. The scraper fetches those feeds
+// through here. It is not an open proxy: it needs its own token, and it only
+// fetches endpoints of enabled sources an owner has marked relay.
+const RELAY_MAX_BYTES = 2 * 1024 * 1024;
+const RELAY_MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+
+export async function relayRoute(request: Request, env: Env, url: URL): Promise<Response> {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405, { allow: 'GET' });
+  if (!await tokenMatches(request, env.FEED_RELAY_TOKEN)) {
+    return json({ error: 'Relay authorization required' }, 401);
+  }
+  let current: string;
+  try {
+    current = validatePublicUrl(url.searchParams.get('url'), 'Relay URL');
+  } catch (error) {
+    if (error instanceof RequestError) return json({ error: error.message }, error.status);
+    throw error;
+  }
+  if (!relayEndpoints(await authoritativeSources(env)).has(current)) {
+    return json({ error: 'URL is not an endpoint of a relay-enabled source' }, 403);
+  }
+  const headers = {
+    'user-agent': request.headers.get('user-agent') || 'Mozilla/5.0 (compatible; HighSignal/1.0)',
+    accept: request.headers.get('accept') || 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8',
+  };
+  for (let hop = 0; hop <= RELAY_MAX_REDIRECTS; hop += 1) {
+    let upstream: Response;
+    try {
+      upstream = await fetch(current, { headers, redirect: 'manual' });
+    } catch {
+      return json({ error: 'Publisher could not be reached' }, 502);
+    }
+    if (REDIRECT_STATUSES.includes(upstream.status)) {
+      const location = upstream.headers.get('location');
+      await upstream.body?.cancel();
+      try {
+        current = validatePublicUrl(new URL(location || '', current).toString(), 'Redirect');
+      } catch {
+        return json({ error: 'Publisher redirected to a local or private address' }, 502);
+      }
+      continue;
+    }
+    if (Number(upstream.headers.get('content-length') || 0) > RELAY_MAX_BYTES) {
+      await upstream.body?.cancel();
+      return json({ error: 'Publisher response is too large' }, 502);
+    }
+    const reply = new Headers({
+      'content-type': upstream.headers.get('content-type') || 'application/octet-stream',
+      'cache-control': 'no-store',
+      'x-relay-upstream-status': String(upstream.status),
+      'x-relay-final-url': current,
+    });
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) reply.set('retry-after', retryAfter);
+    return new Response(upstream.body, { status: upstream.status, headers: reply });
+  }
+  return json({ error: 'Publisher redirected too many times' }, 502);
+}
+
+export function relayEndpoints(sources: Record<string, unknown>[]): Set<string> {
+  const endpoints = new Set<string>();
+  for (const source of sources) {
+    if (source.relay !== true || source.enabled === false) continue;
+    const strategies = Array.isArray(source.fetch_strategies) ? source.fetch_strategies : [];
+    const urls = [source.feed_url, source.url,
+      ...strategies.map((item) => (item as Record<string, unknown> | null)?.url)];
+    for (const value of urls) {
+      if (typeof value !== 'string' || !value) continue;
+      try { endpoints.add(new URL(value).toString()); } catch { /* not a URL */ }
+    }
+  }
+  return endpoints;
 }
 
 async function authoritativeSources(env: Env): Promise<Record<string, unknown>[]> {
@@ -397,6 +477,7 @@ export function validateSource(value: unknown): Record<string, unknown> & { name
   // never reads them, but an edit that rebuilds the source must not erase them.
   const note = cleanString(input.note, 500);
   if (note) source.note = note;
+  if (input.relay != null) source.relay = booleanValue(input.relay, 'relay', false);
   const feedUrl = cleanString(input.feed_url, 2048);
   if (feedUrl) source.feed_url = validatePublicUrl(feedUrl, 'Feed URL');
   if (type === 'static') {
@@ -503,10 +584,14 @@ function privateIp(host: string): boolean {
 }
 
 async function isAuthorized(request: Request, env: Env): Promise<boolean> {
+  return tokenMatches(request, env.ADMIN_API_TOKEN);
+}
+
+async function tokenMatches(request: Request, expected: string | undefined): Promise<boolean> {
   const header = request.headers.get('authorization') || '';
   const supplied = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!supplied || !env.ADMIN_API_TOKEN) return false;
-  const [left, right] = await Promise.all([sha256(supplied), sha256(env.ADMIN_API_TOKEN)]);
+  if (!supplied || !expected) return false;
+  const [left, right] = await Promise.all([sha256(supplied), sha256(expected)]);
   let mismatch = 0;
   for (let index = 0; index < left.length; index += 1) {
     mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
