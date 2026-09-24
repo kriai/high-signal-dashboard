@@ -30,10 +30,11 @@ DEFAULT_RETENTION_HOURS = 72
 def feed_relay_settings():
     """The Worker relay for publishers that refuse datacenter addresses.
 
-    Several Substack publications answer a laptop or Cloudflare but return 403 to
-    the GitHub Actions ranges the scheduled scrape runs from. A source marked
-    relay fetches through the Worker when both settings are present, and
-    directly otherwise, so local runs are unaffected.
+    Several Substack publications answer a laptop but return 403 to the GitHub
+    Actions ranges the scheduled scrape runs from. The Worker saves those feeds
+    on its own schedule, and a source marked relay reads the saved copy when
+    both settings are present. Without them it fetches directly, so local runs
+    are unaffected.
     """
     url = (os.environ.get('FEED_RELAY_URL') or '').strip()
     token = (os.environ.get('FEED_RELAY_TOKEN') or '').strip()
@@ -1562,11 +1563,19 @@ class HighSignalScraper:
             response.url = response.headers.get('x-relay-final-url') or url
             return response
         status = response.status_code
+        detail = ''
+        if 'json' in (response.headers.get('content-type') or ''):
+            try:
+                detail = str(response.json().get('error') or '')[:120]
+            except (AttributeError, ValueError):
+                pass
         self._close_response(response)
+        detail = f': {detail}' if detail else ''
         if status in (401, 403, 404):
-            raise SourceConfigError(f'Feed relay refused the request (HTTP {status})')
+            raise SourceConfigError(
+                f'Feed relay refused the request (HTTP {status}){detail}')
         raise requests.ConnectionError(
-            f'Feed relay could not reach the publisher (HTTP {status})')
+            f'Feed relay could not serve this feed (HTTP {status}){detail}')
 
     @staticmethod
     def _response_peer_address(response):
