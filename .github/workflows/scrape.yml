@@ -56,6 +56,10 @@ jobs:
           CLOUDFLARE_D1_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_API_TOKEN }}
           PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
           SCRAPE_REPORT_PATH: scrape-report.json
+          # Publishers that refuse GitHub's datacenter ranges are fetched through
+          # the Worker when a source is marked relay. Unset means direct fetches.
+          FEED_RELAY_URL: ${{ vars.PUBLIC_ORIGIN && format('{0}/api/relay/feed', vars.PUBLIC_ORIGIN) || '' }}
+          FEED_RELAY_TOKEN: ${{ secrets.FEED_RELAY_TOKEN }}
         run: python scrape_job.py
 
       - name: Upload source diagnostics

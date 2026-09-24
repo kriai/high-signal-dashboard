@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { canonicalCacheKey, derivedEtag, sortArticles, validatePublicUrl,
+import { afterEach, describe, it } from 'node:test';
+import { canonicalCacheKey, derivedEtag, relayRoute, sortArticles, validatePublicUrl,
   validateSource } from '../src/index.ts';
 
 const articles = [
@@ -116,5 +116,89 @@ describe('edge cache keys', () => {
     assert.notEqual(derivedEtag('pub-1', url),
       derivedEtag('pub-1', new URL('https://x.dev/api/feed?sort=score')));
     assert.match(derivedEtag('pub-1', url), /^"pub-1-[0-9a-f]+"$/);
+  });
+});
+
+describe('feed relay', () => {
+  const row = (config: Record<string, unknown>) => ({
+    id: String(config.name), name: config.name, config_json: JSON.stringify(config),
+    revision: 1, updated_at: '',
+  });
+  const env = {
+    FEED_RELAY_TOKEN: 'relay-secret',
+    DB: { prepare: () => ({ all: async () => ({ results: [
+      row({ name: 'Sub', url: 'https://sub.example.com/', feed_url: 'https://sub.example.com/feed', relay: true }),
+      row({ name: 'Plain', url: 'https://plain.example.com/', feed_url: 'https://plain.example.com/feed' }),
+      row({ name: 'Off', url: 'https://off.example.com/', feed_url: 'https://off.example.com/feed',
+        relay: true, enabled: false }),
+    ] }) }) },
+  } as unknown as Parameters<typeof relayRoute>[1];
+  const call = (target: string, token = 'relay-secret') => {
+    const url = new URL(`https://site.example/api/relay/feed?url=${encodeURIComponent(target)}`);
+    return relayRoute(new Request(url, { headers: { authorization: `Bearer ${token}` } }), env, url);
+  };
+  const realFetch = globalThis.fetch;
+  let requested: string[] = [];
+  const serve = (routes: Record<string, () => Response>) => {
+    requested = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const target = String(input);
+      requested.push(target);
+      assert.equal(init?.redirect, 'manual');
+      const route = routes[target];
+      if (!route) throw new Error(`unexpected fetch ${target}`);
+      return route();
+    }) as typeof fetch;
+  };
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it('refuses a missing or wrong token before touching the network', async () => {
+    serve({});
+    assert.equal((await call('https://sub.example.com/feed', 'nope')).status, 401);
+    assert.deepEqual(requested, []);
+  });
+
+  it('only fetches endpoints of enabled sources marked relay', async () => {
+    serve({});
+    for (const target of ['https://plain.example.com/feed', 'https://off.example.com/feed',
+      'https://unrelated.example.org/anything']) {
+      const reply = await call(target);
+      assert.equal(reply.status, 403, target);
+      assert.equal(reply.headers.get('x-relay-upstream-status'), null);
+    }
+    assert.equal((await call('http://127.0.0.1/feed')).status, 400);
+    assert.deepEqual(requested, []);
+  });
+
+  it("passes the publisher's status and body through, marked as upstream", async () => {
+    serve({ 'https://sub.example.com/feed': () => new Response('<rss/>', {
+      status: 200, headers: { 'content-type': 'application/rss+xml' } }) });
+    const ok = await call('https://sub.example.com/feed');
+    assert.equal(ok.status, 200);
+    assert.equal(await ok.text(), '<rss/>');
+    assert.equal(ok.headers.get('x-relay-upstream-status'), '200');
+    assert.equal(ok.headers.get('x-relay-final-url'), 'https://sub.example.com/feed');
+
+    serve({ 'https://sub.example.com/feed': () => new Response('no', { status: 403 }) });
+    const blocked = await call('https://sub.example.com/feed');
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.headers.get('x-relay-upstream-status'), '403');
+  });
+
+  it('follows public redirects and refuses private ones', async () => {
+    serve({
+      'https://sub.example.com/feed': () => new Response(null, {
+        status: 301, headers: { location: '/feed/' } }),
+      'https://sub.example.com/feed/': () => new Response('<rss/>', { status: 200 }),
+    });
+    const moved = await call('https://sub.example.com/feed');
+    assert.equal(moved.headers.get('x-relay-final-url'), 'https://sub.example.com/feed/');
+
+    serve({ 'https://sub.example.com/feed': () => new Response(null, {
+      status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data' } }) });
+    const unsafe = await call('https://sub.example.com/feed');
+    assert.equal(unsafe.status, 502);
+    assert.equal(unsafe.headers.get('x-relay-upstream-status'), null);
+    assert.deepEqual(requested, ['https://sub.example.com/feed']);
   });
 });
