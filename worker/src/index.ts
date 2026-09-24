@@ -393,6 +393,10 @@ export function validateSource(value: unknown): Record<string, unknown> & { name
   if (input.lock_category != null) {
     source.lock_category = booleanValue(input.lock_category, 'lock_category', false);
   }
+  // Operator notes record why a source is configured or disabled. The scraper
+  // never reads them, but an edit that rebuilds the source must not erase them.
+  const note = cleanString(input.note, 500);
+  if (note) source.note = note;
   const feedUrl = cleanString(input.feed_url, 2048);
   if (feedUrl) source.feed_url = validatePublicUrl(feedUrl, 'Feed URL');
   if (type === 'static') {

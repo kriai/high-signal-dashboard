@@ -47,6 +47,23 @@ class ExtractionReliabilityTests(unittest.TestCase):
                      'The Information Startup'):
             self.assertFalse(by_name[name]['enabled'])
 
+    def test_operator_note_survives_edits_without_changing_semantics(self):
+        from source_config import config_fingerprint
+        noted = normalize_source(dict(SOURCE, note='  Disabled: site-wide feed  '))
+        self.assertEqual(noted['note'], 'Disabled: site-wide feed')
+        # An edit that does not mention the note keeps it; one that sets it
+        # replaces it; a blank note clears it.
+        self.assertEqual(normalize_source({'name': 'Example'}, noted)['note'],
+                         'Disabled: site-wide feed')
+        self.assertEqual(normalize_source({'name': 'Example', 'note': 'New'},
+                                          noted)['note'], 'New')
+        self.assertNotIn('note', normalize_source(
+            {'name': 'Example', 'note': ' '}, noted))
+        self.assertEqual(len(normalize_source(dict(SOURCE, note='x' * 900))['note']), 500)
+        # Notes are documentation, so editing one must not discard retention.
+        self.assertEqual(config_fingerprint(noted),
+                         config_fingerprint(normalize_source(SOURCE)))
+
     def test_css_splitter_preserves_nested_and_quoted_commas(self):
         value = ':is(h2, h3) a, a[data-label="news,analysis"],article h4 a'
         self.assertEqual(split_css_selectors(value), [
