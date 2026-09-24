@@ -289,10 +289,14 @@ python scripts/audit_sources.py --d1 --source "The Information"
   - A copy older than 3 hours is not served, so a stopped timer surfaces as a
     failure instead of passing old news off as fresh. The publisher's own
     status is saved too: a Substack 403 still reads as `blocked`.
-  - Copies are stored as UTF-8 text. D1 returns BLOBs as arrays of numbers,
-    which is too slow to rebuild within the Free plan's 10 ms CPU budget for a
-    feed near a megabyte. A feed that isn't UTF-8, or is over 1.9 MB, is not
-    saved.
+  - Copies leave out `<content:encoded>` full post bodies, which the scraper
+    never reads. They are over 95% of a Substack feed: Ben's Bites is 836 KB
+    in full and 11 KB without them, and serving the full copy measured 11 ms of
+    CPU against the Free plan's 10 ms. All four relay feeds parse to identical
+    titles, links, dates and summaries either way.
+  - Copies are stored as UTF-8 text, because D1 returns BLOBs as arrays of
+    numbers, which are slow to rebuild. A feed that isn't UTF-8, or is over
+    1.9 MB before trimming, is not saved.
   - After marking a source relay, `POST /api/admin/relay/refresh` with the
     owner token fills its copy immediately instead of waiting for the timer.
   - Cost on the Free plan: 4 feeds × 48 runs is about 200 D1 rows written a
