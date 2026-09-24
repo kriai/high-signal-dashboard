@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { canonicalCacheKey, derivedEtag, sortArticles, validatePublicUrl,
@@ -64,6 +65,28 @@ describe('source configuration', () => {
     assert.equal(source.allow_empty, true);
     assert.deepEqual(source.allowed_hosts, ['example.com']);
     assert.equal((source.fetch_strategies as Record<string, unknown>[]).length, 2);
+  });
+
+  it('keeps every field of every checked-in source through an edit', () => {
+    // An admin edit rebuilds the source from this validator, so any field it
+    // does not know is erased from D1. Each seed source must round-trip intact.
+    const seed = JSON.parse(readFileSync(new URL('../../sources.json', import.meta.url), 'utf8'));
+    for (const input of seed.sources as Record<string, unknown>[]) {
+      const saved = validateSource(input);
+      for (const [key, value] of Object.entries(input)) {
+        // URLs are stored in canonical form, which names the same address.
+        const expected = key === 'url' || key === 'feed_url'
+          ? new URL(value as string).href : value;
+        assert.deepEqual(saved[key], expected, `${input.name}: ${key} was not preserved`);
+      }
+    }
+  });
+
+  it('bounds the operator note and drops an empty one', () => {
+    const base = { name: 'Example', url: 'https://example.com/' };
+    assert.equal(validateSource({ ...base, note: '  why  ' }).note, 'why');
+    assert.equal((validateSource({ ...base, note: 'x'.repeat(900) }).note as string).length, 500);
+    assert.equal('note' in validateSource({ ...base, note: '   ' }), false);
   });
 
   it('rejects unsafe strategy URLs and excessive retention', () => {

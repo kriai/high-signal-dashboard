@@ -14,7 +14,7 @@ EDITABLE_FIELDS = (
     'url', 'category', 'selector', 'fallback', 'selectors', 'tier', 'limit',
     'retries', 'enabled', 'lock_category', 'type', 'feed_url',
     'fetch_strategies', 'retention_hours', 'allow_empty', 'allowed_hosts',
-    'path_prefixes',
+    'path_prefixes', 'note',
 )
 BLOCKED_HOSTS = ('localhost', 'localhost.localdomain',
                  'metadata.google.internal')
@@ -231,6 +231,11 @@ def normalize_source(payload, existing=None, strict_selectors=False):
         raise SourceConfigError('Tier must be high, medium or low')
     source['tier'] = tier
     source['category'] = str(source.get('category') or 'Other').strip()[:80]
+    note = str(source.get('note') or '').strip()[:500]
+    if note:
+        source['note'] = note
+    else:
+        source.pop('note', None)
     source['limit'] = _bounded_int(source.get('limit'), 'Limit', 15, 1, 50)
     source['retries'] = _bounded_int(source.get('retries'), 'Retries', 3, 1, 3)
     source['retention_hours'] = _bounded_int(
