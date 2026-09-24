@@ -17,16 +17,21 @@ on:
       - 'package-lock.json'
       - '.github/workflows/deploy.yml'
   pull_request:
+    # Checks cover anything the suite exercises, including the suite itself; a
+    # tests-only change must not merge unchecked. Deployment paths stay narrower.
     paths:
       - 'worker/**'
       - 'templates/**'
       - 'static/**'
       - 'scripts/**'
       - 'migrations/**'
+      - 'tests/**'
       - '*.py'
+      - 'sources.json'
       - 'wrangler.jsonc'
       - 'package.json'
       - 'package-lock.json'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
       target:
