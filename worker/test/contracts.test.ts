@@ -212,6 +212,24 @@ describe('feed relay', () => {
     assert.deepEqual(requested, [], 'a relay read must never fetch the publisher');
   });
 
+  it('saves feeds without full post bodies, keeping every entry', async () => {
+    const { env, copies } = fakeEnv();
+    const feed = '<rss><channel>' +
+      '<item><title>One</title><link>https://sub.example.com/p/one</link>' +
+      '<description>Short one</description>' +
+      '<content:encoded><![CDATA[<p>' + 'long body '.repeat(5000) + '</p>]]></content:encoded></item>' +
+      '<item><title>Two</title><link>https://sub.example.com/p/two</link>' +
+      '<content:encoded><![CDATA[<p>two</p>]]></content:encoded></item>' +
+      '</channel></rss>';
+    serve({ [SUB]: () => new Response(feed, { headers: { 'content-type': 'application/rss+xml' } }) });
+    await refreshRelayCopies(env);
+    assert.equal(copies.get(SUB)!.body_text, '<rss><channel>' +
+      '<item><title>One</title><link>https://sub.example.com/p/one</link>' +
+      '<description>Short one</description></item>' +
+      '<item><title>Two</title><link>https://sub.example.com/p/two</link></item>' +
+      '</channel></rss>');
+  });
+
   it("serves the publisher's own refusal as upstream, so it reads as blocked", async () => {
     const { env } = fakeEnv();
     serve({ [SUB]: rss(403) });

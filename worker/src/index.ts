@@ -228,6 +228,12 @@ const RELAY_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const RELAY_MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
 const NULL_BODY_STATUSES = [204, 205, 304];
+// Full post bodies are over 95% of a Substack feed (Ben's Bites: 836 KB, 11 KB
+// without them) and the scraper reads only title, link, date and the
+// <description> summary. Serving the full 857 KB copy measured 11 ms of CPU,
+// over the Free plan's 10 ms, so saved copies leave the bodies out. Checked on
+// all four relay feeds on 2026-09-24: every entry parses to identical fields.
+const FULL_POST_BODIES = /<content:encoded>[\s\S]*?<\/content:encoded>/g;
 const RELAY_HEADERS = {
   'user-agent': 'Mozilla/5.0 (compatible; HighSignal/1.0)',
   accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8',
@@ -366,7 +372,8 @@ async function fetchPublisher(target: string): Promise<PublisherCopy | string> {
       return 'publisher response is not valid UTF-8';
     }
     return { status: upstream.status, contentType, finalUrl: current,
-      retryAfter: upstream.headers.get('retry-after'), text };
+      retryAfter: upstream.headers.get('retry-after'),
+      text: text.replace(FULL_POST_BODIES, '') };
   }
   return 'publisher redirected too many times';
 }
