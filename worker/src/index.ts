@@ -7,6 +7,7 @@ interface Env {
   GITHUB_WORKFLOW_REF?: string;
   GITHUB_DISPATCH_DISABLED?: string;
   FEED_RELAY_TOKEN?: string;
+  RELAY_REFRESHER?: DurableObjectNamespace;
 }
 
 interface Article {
@@ -119,9 +120,37 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    console.log(JSON.stringify({ relay_refresh: await refreshRelayCopies(env) }));
+    console.log(JSON.stringify({ relay_refresh: await refreshRelayCopiesOffWorker(env) }));
   },
 };
+
+/**
+ * Runs the refresh inside a Durable Object. A Worker invocation on the Free
+ * plan gets 10 ms of CPU and Cloudflare terminates one that exceeds it
+ * consistently; the live timer measured 18 ms for four feeds, almost all of it
+ * per-run overhead rather than the feeds themselves. A SQLite-backed Durable
+ * Object, available on the Free plan, gets 30 seconds. It is triggered only by
+ * the timer or the owner, so it still fetches with no Actions caller behind it.
+ */
+export class RelayRefresher {
+  private env: Env;
+
+  constructor(_state: DurableObjectState, env: Env) {
+    this.env = env;
+  }
+
+  async fetch(): Promise<Response> {
+    return json({ refreshed: await refreshRelayCopies(this.env) });
+  }
+}
+
+async function refreshRelayCopiesOffWorker(env: Env): Promise<Record<string, string>> {
+  if (!env.RELAY_REFRESHER) return refreshRelayCopies(env);
+  const stub = env.RELAY_REFRESHER.get(env.RELAY_REFRESHER.idFromName('relay-refresher'));
+  const reply = await stub.fetch('https://relay-refresher/refresh', { method: 'POST' });
+  if (!reply.ok) throw new Error(`Relay refresher answered HTTP ${reply.status}`);
+  return (await reply.json() as { refreshed: Record<string, string> }).refreshed;
+}
 
 async function adminRoute(request: Request, env: Env, url: URL): Promise<Response> {
   if (!await isAuthorized(request, env)) {
@@ -195,7 +224,7 @@ async function adminRoute(request: Request, env: Env, url: URL): Promise<Respons
       return await createToolJob(request, env);
     }
     if (url.pathname === '/api/admin/relay/refresh' && request.method === 'POST') {
-      return json({ refreshed: await refreshRelayCopies(env) }, 200,
+      return json({ refreshed: await refreshRelayCopiesOffWorker(env) }, 200,
         { 'cache-control': 'no-store' });
     }
     const jobMatch = url.pathname.match(/^\/api\/admin\/jobs\/([a-f0-9-]+)$/);

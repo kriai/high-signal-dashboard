@@ -209,13 +209,16 @@
     },
     {
       "name": "StrictlyVC",
-      "url": "https://strictlyvc.com/",
-      "type": "static",
+      "url": "https://techcrunch.com/tag/strictlyvc/",
+      "type": "rss",
       "tier": "high",
       "category": "Funding & M&A",
-      "enabled": false,
-      "selector": "article h2 a, h2 a",
-      "note": "Dead source: StrictlyVC was acquired by TechCrunch, the homepage is now an about/links page with no article list, and https://strictlyvc.com/feed/ is a frozen archive whose newest entry is dated November 2019."
+      "enabled": true,
+      "note": "StrictlyVC now publishes on TechCrunch, which acquired it; its TechCrunch tag feed returned 15 usable entries from GitHub Actions on 2026-09-24.",
+      "feed_url": "https://techcrunch.com/tag/strictlyvc/feed/",
+      "allowed_hosts": [
+        "techcrunch.com"
+      ]
     },
     {
       "name": "Term Sheet (Fortune)",
@@ -262,13 +265,15 @@
     {
       "name": "Product Hunt AI",
       "url": "https://www.producthunt.com/topics/artificial-intelligence",
-      "type": "static",
+      "type": "rss",
       "tier": "medium",
       "category": "AI Tools & Agents",
-      "enabled": false,
-      "selector": "a[data-test='post-name']",
-      "fallback": ".post-item a",
-      "note": "Cloudflare-blocked (HTTP 403) including via cloudscraper. The official API needs an OAuth developer token. Disabled until a key is configured."
+      "enabled": true,
+      "note": "Product Hunt's own launch feed, verified from GitHub Actions with 15 entries on 2026-09-24. It covers all launches, not only AI ones; there is no AI-only feed.",
+      "feed_url": "https://www.producthunt.com/feed",
+      "allowed_hosts": [
+        "producthunt.com"
+      ]
     },
     {
       "name": "Reddit r/singularity",

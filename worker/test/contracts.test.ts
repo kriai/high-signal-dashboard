@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import worker, { canonicalCacheKey, derivedEtag, refreshRelayCopies, relayRoute, sortArticles,
-  validatePublicUrl, validateSource } from '../src/index.ts';
+import worker, { canonicalCacheKey, derivedEtag, refreshRelayCopies, RelayRefresher, relayRoute,
+  sortArticles, validatePublicUrl, validateSource } from '../src/index.ts';
 
 const articles = [
   { id: 'a', title: 'A', link: 'https://example.com/a', source: 'Beta',
@@ -349,6 +349,22 @@ describe('feed relay', () => {
     serve({});
     assert.deepEqual(await refreshRelayCopies(env), {});
     assert.equal(copies.size, 0);
+  });
+
+  it('runs the timer and owner refreshes inside the Durable Object when bound', async () => {
+    const { env, copies } = fakeEnv();
+    const named: string[] = [];
+    (env as unknown as Record<string, unknown>).RELAY_REFRESHER = {
+      idFromName: (name: string) => { named.push(name); return name; },
+      get: () => ({ fetch: () => new RelayRefresher({} as DurableObjectState, env).fetch() }),
+    };
+    serve({ [SUB]: rss() });
+    await worker.scheduled({} as ScheduledController, env);
+    assert.equal(copies.get(SUB)!.status, 200);
+    const reply = await worker.fetch(new Request('https://site.example/api/admin/relay/refresh', {
+      method: 'POST', headers: { authorization: 'Bearer admin-secret' } }), env, {} as ExecutionContext);
+    assert.equal(reply.status, 200);
+    assert.deepEqual(named, ['relay-refresher', 'relay-refresher']);
   });
 
   it('lets only the owner refresh copies on demand', async () => {

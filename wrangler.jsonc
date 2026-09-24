@@ -34,7 +34,17 @@
       // Saves relay-enabled feeds into D1 for /api/relay/feed to serve.
       "triggers": {
         "crons": ["*/30 * * * *"]
-      }
+      },
+      // The refresh runs in this object, which gets 30 s of CPU rather than a
+      // Free plan Worker's 10 ms.
+      "durable_objects": {
+        "bindings": [
+          { "name": "RELAY_REFRESHER", "class_name": "RelayRefresher" }
+        ]
+      },
+      "migrations": [
+        { "tag": "relay-refresher-v1", "new_sqlite_classes": ["RelayRefresher"] }
+      ]
     }
   },
   "observability": {
