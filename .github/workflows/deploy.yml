@@ -33,13 +33,6 @@ on:
       - 'package-lock.json'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
-    inputs:
-      target:
-        description: Wrangler environment to deploy
-        required: true
-        default: preview
-        type: choice
-        options: [preview, production]
 
 concurrency:
   group: deploy-worker-${{ github.ref }}
@@ -69,16 +62,13 @@ jobs:
       - name: Static asset build
         run: npm run build
       - name: Deployment dry run
-        run: npx wrangler deploy --env preview --dry-run
+        run: npx wrangler deploy --dry-run
 
   deploy:
     needs: checks
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      # Defaults to the preview Worker. Production is a deliberate dispatch.
-      TARGET: ${{ inputs.target || 'preview' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,8 +89,8 @@ jobs:
           # Until the owner configures Cloudflare credentials, keep main green
           # and say so instead of failing every push with an auth error.
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::notice::Cloudflare credentials are not configured; skipped $TARGET deployment"
+            echo "::notice::Cloudflare credentials are not configured; skipped deployment"
             exit 0
           fi
-          npx wrangler deploy --env "$TARGET" \
+          npx wrangler deploy \
             --message "${GITHUB_SHA:0:7} via ${GITHUB_WORKFLOW}"
