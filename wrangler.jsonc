@@ -1,5 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
+  // One Worker, served at high-signal-dashboard.<subdomain>.workers.dev. It
+  // was the `preview` environment until the cutover; the database keeps its
+  // original name because renaming a D1 database is not worth a migration.
   "name": "high-signal-dashboard",
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-09-10",
@@ -13,40 +16,28 @@
     {
       "binding": "DB",
       "database_name": "high-signal-preview",
-      "database_id": "replace-with-preview-database-id",
+      "database_id": "3b33be5d-bfa7-4f67-a3fb-afcab5659e2b",
       "migrations_dir": "migrations"
     }
   ],
-  "env": {
-    "preview": {
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "high-signal-preview",
-          "database_id": "3b33be5d-bfa7-4f67-a3fb-afcab5659e2b",
-          "migrations_dir": "migrations"
-        }
-      ],
-      "vars": {
-        "GITHUB_REPOSITORY": "kriai/high-signal-dashboard",
-        "GITHUB_WORKFLOW_REF": "main"
-      },
-      // Saves relay-enabled feeds into D1 for /api/relay/feed to serve.
-      "triggers": {
-        "crons": ["*/30 * * * *"]
-      },
-      // The refresh runs in this object, which gets 30 s of CPU rather than a
-      // Free plan Worker's 10 ms.
-      "durable_objects": {
-        "bindings": [
-          { "name": "RELAY_REFRESHER", "class_name": "RelayRefresher" }
-        ]
-      },
-      "migrations": [
-        { "tag": "relay-refresher-v1", "new_sqlite_classes": ["RelayRefresher"] }
-      ]
-    }
+  "vars": {
+    "GITHUB_REPOSITORY": "kriai/high-signal-dashboard",
+    "GITHUB_WORKFLOW_REF": "main"
   },
+  // Saves relay-enabled feeds into D1 for /api/relay/feed to serve.
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  },
+  // The refresh runs in this object, which gets 30 s of CPU rather than a
+  // Free plan Worker's 10 ms.
+  "durable_objects": {
+    "bindings": [
+      { "name": "RELAY_REFRESHER", "class_name": "RelayRefresher" }
+    ]
+  },
+  "migrations": [
+    { "tag": "relay-refresher-v1", "new_sqlite_classes": ["RelayRefresher"] }
+  ],
   "observability": {
     "enabled": true
   }

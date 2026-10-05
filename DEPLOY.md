@@ -4,17 +4,27 @@ The app still runs unchanged on a laptop (`python app.py`, APScheduler, JSON
 files on disk). Everything below is about the second environment, not a
 replacement for the first — `BLOB_READ_WRITE_TOKEN` decides which one is live.
 
-## Cloudflare preview (migration path, not live yet)
+## Cloudflare (live)
 
 The Cloudflare implementation serves generated static assets through Workers
 Static Assets, keeps the published dashboard and authoritative source settings
-in D1, and leaves scraping/source tests in GitHub Actions. The existing Vercel
-deployment stays intact until preview acceptance and an explicit cutover.
+in D1, and leaves scraping/source tests in GitHub Actions.
 
-The preview is deployed and serving the current snapshot at
-<https://high-signal-dashboard-preview.krishayd.workers.dev>, backed by the
-`high-signal-preview` D1 database. It is a review environment: nothing publishes
-into it on a schedule yet, so its feed is as old as the last manual import.
+The site is live at <https://high-signal-dashboard.krishayd.workers.dev>,
+backed by the `high-signal-preview` D1 database (the name predates the cutover;
+renaming a D1 database is not worth a migration). The scrape workflow publishes
+into it every 30 minutes, and the Worker's own cron refreshes the relay copies.
+There is one Worker and one environment: the earlier `-preview` Worker was
+retired at the cutover so the scheduled work does not run twice on the Free
+plan.
+
+The Worker needs three secrets, set with `npx wrangler secret put <NAME>`:
+`ADMIN_API_TOKEN` (the owner token typed into the Sources dialog),
+`FEED_RELAY_TOKEN` (must match the repository secret of the same name), and
+`GITHUB_ACTIONS_TOKEN` (optional: a token that can dispatch `source-tools.yml`;
+without it, Discover and Test report that dispatch is not configured). The
+repository variable `PUBLIC_ORIGIN` must name the live origin, because the
+scrape and source-tools workflows reach the relay through it.
 
 Reads are edge cached by canonical URL and answer `x-cache: hit|miss`. Cache
 entries are per data centre, so the first request in a new location is a miss;
@@ -71,12 +81,11 @@ gh workflow run scrape.yml -f state_backend=d1
 `.github/workflows/deploy.yml` runs the Python, TypeScript, client-JavaScript and
 Worker-contract suites plus a deployment dry run on every pull request, with no
 Cloudflare credentials in that job. It deploys the Worker on pushes that change
-site code and on manual dispatch (`preview` by default, `production` only when
-chosen), and skips the deployment step with a notice while the repository has no
+site code and on manual dispatch, and skips the deployment step with a notice while the repository has no
 `CLOUDFLARE_API_TOKEN`. Scrapes publish data into D1 and never redeploy the site.
 
 Keep the published dashboard document under about 300 KB, roughly 400 articles.
-That is where the Cloudflare preview measurements put the boundary of the 10 ms
+That is where the Cloudflare measurements put the boundary of the 10 ms
 Workers Free CPU budget for uncached filtered compatibility queries; the browser
 path itself stays under 5 ms well past that. `scrape_job.py` prints a warning
 when a published document crosses the budget.
@@ -227,7 +236,7 @@ The deploy workflow does not apply D1 migrations. Apply a new one before the
 Worker that needs it goes live; they are additive, so older code ignores them:
 
 ```bash
-npx wrangler d1 migrations apply high-signal-preview --remote --env preview
+npx wrangler d1 migrations apply high-signal-preview --remote
 ```
 
 Run the offline regression suite before publishing:
