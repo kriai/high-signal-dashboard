@@ -293,6 +293,19 @@
       "enabled": true,
       "selector": "span.link a",
       "fallback": "a[href*='/s/']"
+    },
+    {
+      "name": "Simon Willison",
+      "url": "https://simonwillison.net/",
+      "type": "rss",
+      "tier": "high",
+      "category": "AI Tools & Agents",
+      "enabled": true,
+      "feed_url": "https://simonwillison.net/atom/entries/",
+      "allowed_hosts": [
+        "simonwillison.net"
+      ],
+      "note": "Long-form entries feed only; the homepage advertises /atom/everything/, which adds link posts, quotes and package release notes. Verified with 15 usable entries on 2026-10-15."
     }
   ]
 }

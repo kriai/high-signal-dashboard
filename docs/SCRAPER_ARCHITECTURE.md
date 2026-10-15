@@ -31,7 +31,7 @@ a scheduled CI job (`.github/workflows/scrape.yml` → `scrape_job.py`).
 | File | Role |
 | --- | --- |
 | `scraper.py` | All scraping, parsing, filtering, scoring, categorising, dating, dedupe, and the legacy JSON cache read/write. The only file that touches the network for feed content. |
-| `sources.json` | Committed seed source list (27 sources). Authoritative only in local/Blob mode; in D1 mode the `sources` table is authoritative. |
+| `sources.json` | Committed seed source list (28 sources). Authoritative only in local/Blob mode; in D1 mode the `sources` table is authoritative. |
 | `pipeline.py` | Flask-free orchestration: run and validate a scrape, warm summaries, then build the immutable **documents** (`dashboard`, `export`, `rss_default`, `stats`, `sources`, `scraper_state`) that get published. |
 | `scrape_job.py` | The scheduled entry point. Branches on `store.backend_name()`: D1 path (`_run_d1`) or legacy Blob/local path (`_run_legacy`). |
 | `store.py` | Legacy JSON storage abstraction: `LocalStore`, `BlobStore`, and a `D1StoreBoundary` that deliberately raises so D1 never gets treated as a file backend. |
