@@ -3,28 +3,28 @@
 
    Four layouts over one corpus, each shaped by what the reader came to do:
 
-     feed        one stream, grouped by day, numbered, source and topic under
-                 each headline
-     categories  a sticky index of topics beside one continuous page of topic
+     today       the front page: the top three as a hero, then bands by rank
+                 (top picks, worth a look, the rest), each step down the page
+                 visibly lighter than the one above it
+     latest      the same corpus newest first, grouped by day
+     topics      a sticky index of topics beside one continuous page of topic
                  sections, four headlines each until a section is expanded
      sources     a board of publisher cards, three headlines each, no column
                  scrolls inside another column
-     saved       the reading list, stored locally as snapshots, in the feed's
-                 own layout
 
    None of the four scrolls inside itself. The page scroll is the only scroll,
    which is what lets a headline be as long as it needs to be.
 
    The whole corpus is a few hundred headlines, so it is fetched once from
-   /api/dashboard and every filter (score threshold, text query, source, category,
-   unread) plus both groupings run client-side. That keeps switching views and
-   filtering instant. Only the feed's order comes from the server, because
-   ordering uses the same small parity-tested helpers as the compatibility API.
+   /api/dashboard and every filter (score threshold, text query, source,
+   category) plus every grouping and ordering runs client-side. That keeps
+   switching views and filtering instant.
 
-   Three things live only in the browser, because they are per-person and the
-   server has no accounts: read state, the reading list, and hidden headlines.
-   All three are snapshots or id sets in localStorage, capped so they cannot
-   grow without bound.
+   A few things live only in the browser, because they are per-person and the
+   server has no accounts: read state, hidden headlines, pinned topics and the
+   time of the last visit (which is what marks a headline NEW). They are id
+   sets or single values in localStorage, capped so they cannot grow without
+   bound.
 
    Scores are rule-based and arrive with their own arithmetic attached
    (`score_reasons`), which is what the expanded row renders. Nothing about the
@@ -36,12 +36,14 @@
 
   var POLL_MS = 300000;
   var JOB_POLL_MS = 1500;
-  var VIEWS = ['feed', 'categories', 'sources', 'saved'];
-  var SORTS = ['score', 'recent', 'mixed'];
+  var VIEWS = ['today', 'latest', 'topics', 'sources'];
+  // Names the views had before the A5 front page. Old bookmarks and stored
+  // preferences still land somewhere sensible; Saved no longer exists.
+  var VIEW_ALIASES = { feed: 'today', categories: 'topics', saved: 'today' };
+  var SCORE_FLOORS = [0, 80, 90];
   var UNCATEGORIZED = 'Other';
   var READ_CAP = 4000;
   var HIDDEN_CAP = 1000;
-  var SAVED_CAP = 500;
 
   // How much of each layout opens unasked. Four headlines is the most a topic
   // section can show without the next topic falling off the screen; three is
@@ -50,13 +52,30 @@
   var SOURCE_PREVIEW = 3;
   var FEED_PAGE = 30;
 
-  // `title` never reaches the page: it names the view for the document outline
-  // and for anything reading the page aloud. Only the placeholder is seen.
-  var VIEW_COPY = {
-    feed:       { title: 'The feed',  search: 'Search the feed…' },
-    categories: { title: 'Categories', search: 'Search articles…' },
-    sources:    { title: 'Sources',   search: 'Find a source or article…' },
-    saved:      { title: 'Saved',     search: 'Search saved headlines…' }
+  // The front page bands by rank, not by score: real scores bunch together
+  // (90, 90, 90, 86, then seventeen between 80 and 84), so fixed thresholds
+  // would leave a top band of one. Positions are 1-based and inclusive.
+  var HERO_SIZE = 3;
+  var BANDS = [
+    { key: 'top',   label: 'Top picks',    from: 4,  to: 8 },
+    { key: 'worth', label: 'Worth a look', from: 9,  to: 20 },
+    { key: 'rest',  label: 'The rest',     from: 21, to: Infinity }
+  ];
+  var REST_COLUMNS = 3;
+
+  // Publisher text that is a bot wall or newsletter boilerplate rather than a
+  // summary of the story.
+  var JUNK_SUMMARY = /not a robot|click the box|^welcome to|subscribe now|^curated weekly/i;
+  // The scraper's own placeholder (scraper.py LEGACY_SUMMARY_PREFIX).
+  var GENERATED_SUMMARY_PREFIX = 'Headline picked up from ';
+
+  // Titles never reach the page: they name the view for the document outline
+  // and for anything reading the page aloud.
+  var VIEW_TITLES = {
+    today: 'Today',
+    latest: 'Latest',
+    topics: 'Topics',
+    sources: 'Sources'
   };
 
   var KNOWN_CATEGORIES = [
@@ -80,17 +99,14 @@
     stats: null,
     health: null,
     thresholds: { high: 75, mid: 60 },
-    view: 'feed',
-    sort: 'score',
+    view: 'today',
     minScore: 0,
     query: '',
     source: '',
     category: '',
-    unreadOnly: false,
     status: 'loading',      // loading | ready | error
     pollFailures: 0,
     lastSync: null,
-    nextSync: null,
     selectedId: null,
     expandedId: null,
     // Which topic sections and source cards the reader has opened past their
@@ -109,17 +125,17 @@
 
   var el = {};
   [
-    'grid', 'reading', 'search', 'scoreSwitch', 'viewSwitch', 'sortSwitch',
-    'refreshBtn', 'themeBtn', 'resultCount', 'lastUpdated', 'toasts', 'nextSync',
-    'statusDot', 'status', 'statusChip', 'statusChipText', 'statusPanel',
-    'statusPanelList', 'statusPanelAction', 'sourcesBtn', 'helpBtn',
+    'grid', 'reading', 'search', 'scoreSwitch', 'viewSwitch', 'dateline',
+    'themeBtn', 'resultCount', 'toasts',
+    'status', 'statusChip', 'statusChipText', 'statusPanel',
+    'statusPanelList', 'statusPanelAction', 'helpBtn',
     'progress', 'progressBar', 'progressLabel',
-    'filters', 'newPill', 'unreadBtn', 'moreBtn',
+    'filters', 'newPill', 'moreBtn',
     'moreMenu', 'markReadBtn', 'sourcesDialog', 'helpDialog', 'sourceList',
     'sourcesSummary', 'addSource', 'addSourceForm', 'discoverSourceBtn',
     'testSourceBtn', 'testPreview', 'sourceDiscovery', 'sourceType',
     'sourceFeedUrl', 'sourceSelector', 'sourceFallback', 'categorySelect',
-    'refreshFromDialog', 'viewHead', 'viewTitle', 'catIndex',
+    'refreshFromDialog', 'viewTitle', 'catIndex',
     'catIndexNav', 'jumpBar', 'jump', 'adminToken', 'adminStatus', 'stateFile'
   ].forEach(function (id) { el[id] = document.getElementById(id); });
   el.themeIcon = document.querySelector('[data-theme-icon]');
@@ -197,12 +213,11 @@
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* full */ }
   }
 
-  // Read, saved and hidden are per-person and the server has no accounts, so
-  // they live here. Ids are kept newest-first and truncated, which bounds the
+  // Read and hidden are per-person and the server has no accounts, so they
+  // live here. Ids are kept newest-first and truncated, which bounds the
   // storage without a migration.
   var store = {
     read: readJson('hs.read', []),
-    saved: readJson('hs.saved', []),
     hidden: readJson('hs.hidden', []),
     pinned: readJson('hs.pinned', [])
   };
@@ -211,14 +226,11 @@
   store.read.forEach(function (id) { readIndex[id] = true; });
   var hiddenIndex = {};
   store.hidden.forEach(function (id) { hiddenIndex[id] = true; });
-  var savedIndex = {};
-  store.saved.forEach(function (item) { savedIndex[item.id] = item; });
   var pinnedIndex = {};
   store.pinned.forEach(function (name) { pinnedIndex[name] = true; });
 
 
   function isRead(id) { return readIndex[id] === true; }
-  function isSaved(id) { return savedIndex[id] !== undefined; }
   function isHidden(id) { return hiddenIndex[id] === true; }
   function isPinned(name) { return pinnedIndex[name] === true; }
 
@@ -253,37 +265,31 @@
     return true;
   }
 
-  // Saved items are stored as snapshots, not ids: a reading list that empties
-  // itself when the source drops off the front page is not a reading list.
-  function toggleSaved(article) {
-    if (isSaved(article.id)) {
-      delete savedIndex[article.id];
-      store.saved = store.saved.filter(function (item) { return item.id !== article.id; });
-    } else {
-      var snapshot = {
-        id: article.id,
-        title: article.title,
-        link: article.link,
-        source: article.source,
-        category: categoryOf(article),
-        signal_score: scoreOf(article),
-        score_reasons: article.score_reasons || [],
-        summary: article.summary || '',
-        summary_source: article.summary_source || '',
-        published: article.published || null,
-        published_precision: article.published_precision || null,
-        first_seen: article.first_seen || article.timestamp || null,
-        last_fetched_at: article.last_fetched_at || null,
-        is_stale: Boolean(article.is_stale),
-        also_in: article.also_in || [],
-        saved_at: new Date().toISOString()
-      };
-      savedIndex[article.id] = snapshot;
-      store.saved.unshift(snapshot);
-      store.saved = store.saved.slice(0, SAVED_CAP);
+  /* -- What is new since the last visit ----------------------------------
+     A headline is NEW when High Signal first saw it after the reader's
+     previous visit. The visit is stamped when the page is hidden or closed,
+     and the baseline it is compared against is pinned for the life of the
+     tab, so reloading mid-read does not wipe the tags the reader came back
+     for. A first visit has no baseline, so nothing is NEW. */
+
+  var previousVisit = (function () {
+    var pinned = null;
+    try { pinned = sessionStorage.getItem('hs.visitBaseline'); } catch (error) { /* blocked */ }
+    if (pinned === null) {
+      pinned = readPref('hs.lastVisit', '');
+      try { sessionStorage.setItem('hs.visitBaseline', pinned); } catch (error) { /* blocked */ }
     }
-    writeJson('hs.saved', store.saved);
-    return isSaved(article.id);
+    return parseDate(pinned);
+  })();
+
+  function stampVisit() {
+    writePref('hs.lastVisit', new Date().toISOString());
+  }
+
+  function isNew(article) {
+    if (!previousVisit || isRead(article.id)) return false;
+    var seen = parseDate(article.first_seen) || parseDate(article.timestamp);
+    return Boolean(seen && seen > previousVisit);
   }
 
   function toggleHidden(id) {
@@ -300,9 +306,10 @@
 
   /* -- Moving reading state between addresses -----------------------------
      localStorage is scoped to one origin, so a reader who follows the site to
-     a new hostname arrives with nothing. This exports the four lists as a file
-     and merges one back in. Merging, not replacing: importing an old file
-     should never throw away what has been read since. */
+     a new hostname arrives with nothing. This exports the lists as a file and
+     merges one back in. Merging, not replacing: importing an old file should
+     never throw away what has been read since. Files from before Saved was
+     retired still load; their `saved` list is ignored. */
 
   var STATE_FILE_KIND = 'high-signal-reading-state';
 
@@ -313,7 +320,6 @@
       exported_at: new Date().toISOString(),
       origin: location.origin,
       read: store.read,
-      saved: store.saved,
       hidden: store.hidden,
       pinned: store.pinned
     };
@@ -331,21 +337,11 @@
     return out;
   }
 
-  function savedList(value) {
-    if (!Array.isArray(value)) return [];
-    return value.filter(function (item) {
-      return item && typeof item === 'object' &&
-        typeof item.id === 'string' && item.id &&
-        typeof item.title === 'string' && safeUrl(item.link) !== '#';
-    });
-  }
-
-  // Existing entries win, so ids keep the snapshot this browser already has.
   function mergeReadingState(document) {
     if (!document || typeof document !== 'object' || document.kind !== STATE_FILE_KIND) {
       throw new Error('That file is not a High Signal reading state export.');
     }
-    var added = { read: 0, saved: 0, hidden: 0, pinned: 0 };
+    var added = { read: 0, hidden: 0, pinned: 0 };
 
     idList(document.read, READ_CAP).forEach(function (id) {
       if (isRead(id)) return;
@@ -363,17 +359,6 @@
     });
     store.hidden = store.hidden.slice(0, HIDDEN_CAP);
 
-    savedList(document.saved).forEach(function (item) {
-      if (isSaved(item.id)) return;
-      savedIndex[item.id] = item;
-      store.saved.push(item);
-      added.saved += 1;
-    });
-    store.saved.sort(function (a, b) {
-      return String(b.saved_at || '').localeCompare(String(a.saved_at || ''));
-    });
-    store.saved = store.saved.slice(0, SAVED_CAP);
-
     idList(document.pinned, 100).forEach(function (name) {
       if (isPinned(name)) return;
       pinnedIndex[name] = true;
@@ -386,12 +371,9 @@
     store.read.forEach(function (id) { readIndex[id] = true; });
     hiddenIndex = {};
     store.hidden.forEach(function (id) { hiddenIndex[id] = true; });
-    savedIndex = {};
-    store.saved.forEach(function (item) { savedIndex[item.id] = item; });
 
     writeJson('hs.read', store.read);
     writeJson('hs.hidden', store.hidden);
-    writeJson('hs.saved', store.saved);
     writeJson('hs.pinned', store.pinned);
     return added;
   }
@@ -434,14 +416,6 @@
     if (minutes < 1) return 'updated just now';
     if (minutes < 60) return 'updated ' + plural(minutes, 'min') + ' ago';
     return 'updated ' + plural(Math.round(minutes / 60), 'hr') + ' ago';
-  }
-
-  function relativeFuture(date) {
-    if (!date) return '—';
-    var minutes = Math.round((date.getTime() - Date.now()) / 60000);
-    if (minutes <= 0) return 'any moment';
-    if (minutes < 60) return 'in ' + plural(minutes, 'min');
-    return 'in ' + plural(Math.round(minutes / 60), 'hr');
   }
 
   var DAY_FORMAT = { day: 'numeric', month: 'short' };
@@ -514,35 +488,41 @@
   }
 
   function corpus() {
-    return state.view === 'saved' ? store.saved : state.articles;
+    return state.articles;
+  }
+
+  function isPaged() {
+    return state.view === 'today' || state.view === 'latest';
   }
 
   // The query matches the source name as well as the title, so typing
-  // "techmeme" narrows the feed to one source without leaving the flat view.
+  // "techmeme" narrows the page to one source without leaving the view.
+  // state.articles is kept in signal order; Latest re-sorts its own copy.
   function visibleArticles() {
     var query = state.query.trim().toLowerCase();
-    var savedView = state.view === 'saved';
 
-    return corpus().filter(function (article) {
-      if (!savedView && isHidden(article.id)) return false;
+    var articles = corpus().filter(function (article) {
+      if (isHidden(article.id)) return false;
       if (scoreOf(article) < state.minScore) return false;
       if (state.source && article.source !== state.source) return false;
       if (state.category && categoryOf(article) !== state.category) return false;
-      if (state.unreadOnly && isRead(article.id)) return false;
       if (!query) return true;
       return String(article.title || '').toLowerCase().indexOf(query) !== -1 ||
              String(article.source || '').toLowerCase().indexOf(query) !== -1;
     });
+    return state.view === 'latest' ? sortedDashboardArticles(articles, 'recent') : articles;
   }
 
-  // What is actually on the page right now. The feed pages itself, so "copy
-  // visible links" and "mark everything shown as read" have to mean the rows
-  // the reader can see, not the whole filtered corpus behind them.
+  // What is actually on the page right now. Today and Latest page themselves,
+  // so "copy visible links" and "mark everything shown as read" have to mean
+  // the rows the reader can see, not the whole filtered corpus behind them.
   function renderedArticles() {
     var articles = visibleArticles();
-    return (state.view === 'feed' || state.view === 'saved')
-      ? articles.slice(0, state.limit)
-      : articles;
+    return isPaged() ? articles.slice(0, state.limit) : articles;
+  }
+
+  function corpusTotal() {
+    return corpus().filter(function (a) { return !isHidden(a.id); }).length;
   }
 
   // Expanding a section is a reading decision, not a filter, so it survives a
@@ -621,7 +601,7 @@
     for (var i = 0; i < pool.length; i++) {
       if (pool[i].id === id) return pool[i];
     }
-    return savedIndex[id] || null;
+    return null;
   }
 
   function activeFilters() {
@@ -630,7 +610,6 @@
     if (state.minScore) pills.push({ kind: 'score', label: 'score ' + state.minScore + '+' });
     if (state.source) pills.push({ kind: 'source', label: state.source });
     if (state.category) pills.push({ kind: 'category', label: state.category });
-    if (state.unreadOnly) pills.push({ kind: 'unread', label: 'unread only' });
     return pills;
   }
 
@@ -639,12 +618,12 @@
   }
 
   // The pills speak for the filters that have no control of their own. The
-  // score floor and unread-only are switched on in plain sight in the view
-  // head, so a pill for either is the same state said twice -- and, when it
-  // was the only filter, a whole row of the page spent saying it.
+  // signal floor is switched on in plain sight beside the tabs, and the search
+  // box shows its own query, so a pill for either is the same state said
+  // twice.
   function pillFilters() {
     return activeFilters().filter(function (pill) {
-      return pill.kind !== 'score' && pill.kind !== 'unread';
+      return pill.kind !== 'score' && pill.kind !== 'query';
     });
   }
 
@@ -697,7 +676,7 @@
 
   // Per-row controls are deliberately out of the tab sequence. With a few
   // hundred rows, five tab stops each would put the app's own controls hundreds
-  // of presses away; the keyboard reaches these through j/k plus s, x and
+  // of presses away; the keyboard reaches these through j/k plus x, m and
   // Space instead, and the search box filters by source name as well.
   function iconButton(action, iconName, label, pressed) {
     return '<button type="button" tabindex="-1" class="row__icon" data-act="' + action + '"' +
@@ -760,9 +739,6 @@
         '<a class="btn btn--solid btn--sm" href="' + escapeHtml(safeUrl(article.link)) +
         '" target="_blank" rel="noopener noreferrer" data-act="open">' +
         icon('arrow', '') + 'Open original</a>' +
-        '<button type="button" class="btn btn--outline btn--sm" data-act="save">' +
-        icon(isSaved(article.id) ? 'bookmark-on' : 'bookmark', '') +
-        (isSaved(article.id) ? 'Saved' : 'Save') + '</button>' +
         '<button type="button" class="btn btn--ghost btn--sm" data-act="toggle-read">' +
         (isRead(article.id) ? 'Mark unread' : 'Mark read') + '</button>' +
         '<button type="button" class="btn btn--ghost btn--sm" data-act="filter-source"' +
@@ -781,15 +757,13 @@
     var score = scoreOf(article);
     var id = escapeHtml(article.id);
     var expanded = state.expandedId === article.id;
-    var saved = isSaved(article.id);
     var stale = article.is_stale
       ? '<span title="The latest source fetch failed; this is the last successful copy">stale copy</span>'
       : '';
 
     return '<li class="row' + (opts.className ? ' ' + opts.className : '') + '"' +
-      ' data-id="' + id + '"' +
+      ' data-item data-id="' + id + '"' +
       ' data-read="' + (isRead(article.id) ? 'true' : 'false') + '"' +
-      ' data-saved="' + (saved ? 'true' : 'false') + '"' +
       (state.selectedId === article.id ? ' data-selected="true"' : '') + '>' +
       '<div class="row__line">' +
         (opts.position
@@ -809,8 +783,6 @@
           ' aria-expanded="' + (expanded ? 'true' : 'false') +
           '" title="Signal score ' + score + ' — open the breakdown"' +
           ' aria-label="Signal score ' + score + '. Open the breakdown">' + score + '</button>' +
-          iconButton('save', saved ? 'bookmark-on' : 'bookmark',
-                     saved ? 'Remove from saved' : 'Save for later', saved) +
           iconButton('hide', 'x', 'Hide this headline') +
         '</div>' +
       '</div>' +
@@ -818,70 +790,257 @@
     '</li>';
   }
 
-  /* -- Feed --------------------------------------------------------------- */
+  /* -- Today and Latest ---------------------------------------------------
+     The front page is one idea: visual weight follows rank and never goes
+     back up. The top three are a hero, then three bands, each a visible step
+     lighter than the one above -- a serif headline with its summary, a sans
+     headline with one line of meta, then a three-column index of titles.
+     Latest is the same corpus newest first, at the middle band's weight. */
 
-  // Day headers only earn their space when the list is actually in date order;
-  // in score order they would cut the ranking into arbitrary blocks, so the
-  // other two orders get a single group whose gutter names the ordering itself.
-  function feedGroups(articles) {
-    if (state.view === 'saved') {
-      return [{ label: 'Saved', sub: 'Newest first', articles: articles }];
+  // Markup inside a textarea is parsed as text, so this decodes entities
+  // (&nbsp; &amp; &#8217;) without ever building an element from the input.
+  // The result is escaped again on the way out like any other text.
+  var entityDecoder = document.createElement('textarea');
+
+  function decodeEntities(text) {
+    entityDecoder.innerHTML = text;
+    return entityDecoder.value;
+  }
+
+  // A summary line is shown only when it is the publisher's own words about
+  // this story: not missing, not the app's placeholder, not a bot wall or a
+  // newsletter's welcome paragraph.
+  function usableSummary(article) {
+    var raw = String(article.summary || '').trim();
+    if (!raw || !article.summary_source) return '';
+    if (raw.indexOf(GENERATED_SUMMARY_PREFIX) === 0) return '';
+    if (raw === article.source + ': ' + article.title) return '';
+    var text = decodeEntities(raw).replace(/\s+/g, ' ').trim();
+    if (!text || JUNK_SUMMARY.test(text)) return '';
+    return text;
+  }
+
+  function newTag(article, small) {
+    if (!isNew(article)) return '';
+    return '<span class="newtag' + (small ? ' newtag--sm' : '') + '"' +
+      ' title="First seen since your last visit">NEW</span>';
+  }
+
+  function staleNote(article) {
+    return article.is_stale
+      ? '<span title="The latest source fetch failed; this is the last successful copy">stale copy</span>'
+      : '';
+  }
+
+  // Every story on these two pages carries the same hooks as a row elsewhere:
+  // data-item for j/k, data-id for the actions, data-read for the muted title.
+  function storyAttrs(article, className) {
+    return ' class="' + className + '" data-item data-id="' + escapeHtml(article.id) + '"' +
+      ' data-read="' + (isRead(article.id) ? 'true' : 'false') + '"' +
+      (state.selectedId === article.id ? ' data-selected="true"' : '');
+  }
+
+  function storyLink(article, query, className) {
+    return '<a class="' + className + '" href="' + escapeHtml(safeUrl(article.link)) + '"' +
+      ' target="_blank" rel="noopener noreferrer" data-act="open">' +
+      highlight(article.title, query) + '</a>';
+  }
+
+  // The number reads as plain type, but it is still the door to its own
+  // arithmetic, the same as the score on every other row.
+  function scoreButton(article, className) {
+    var score = scoreOf(article);
+    return '<button type="button" tabindex="-1" class="' + className + '" data-act="expand"' +
+      ' aria-expanded="' + (state.expandedId === article.id ? 'true' : 'false') + '"' +
+      ' title="Why ' + score + '? Open the score breakdown"' +
+      ' aria-label="Signal score ' + score + '. Open the breakdown">' + score + '</button>';
+  }
+
+  function detailFor(article) {
+    return state.expandedId === article.id ? renderDetail(article) : '';
+  }
+
+  function storyMeta(parts, article, small) {
+    var stale = staleNote(article);
+    return '<p class="story__meta"><span class="story__metatext">' + metaLine(parts) +
+      (stale ? '<span class="row__dot" aria-hidden="true">·</span>' + stale : '') +
+      '</span>' + (article ? newTag(article, small) : '') + '</p>';
+  }
+
+  function metaAgeAgo(article) {
+    var age = ageOf(article);
+    if (!age.text) return '';
+    var text = /^\d+(m|h|d|w|mo)$/.test(age.text) ? age.text + ' ago' : age.text;
+    return '<span class="row__age' + (age.estimated ? ' row__age--est' : '') +
+      '" title="' + escapeHtml(age.title) + '">' + escapeHtml(text) + '</span>';
+  }
+
+  function renderLead(article, query) {
+    var score = scoreOf(article);
+    var expanded = state.expandedId === article.id;
+    return '<article' + storyAttrs(article, 'lead') + '>' +
+      '<div class="lead__kicker">' +
+        '<span class="lead__badge">' + score + ' SIGNAL</span>' +
+        metaFilter('category', categoryOf(article), 'lead__topic') +
+      '</div>' +
+      '<h3 class="lead__title">' + storyLink(article, query, 'lead__link') + '</h3>' +
+      '<p class="lead__meta">' +
+        metaLine([metaSource(article), metaAgeAgo(article), metaAlso(article)]) +
+        (staleNote(article) ? '<span class="row__dot" aria-hidden="true">·</span>' +
+          staleNote(article) : '') +
+      '</p>' +
+      '<div class="lead__actions">' +
+        '<a class="pill pill--ink" href="' + escapeHtml(safeUrl(article.link)) + '"' +
+        ' target="_blank" rel="noopener noreferrer" data-act="open">Read story ↗</a>' +
+        '<button type="button" class="pill pill--soft" data-act="expand"' +
+        ' aria-expanded="' + (expanded ? 'true' : 'false') + '">Why ' + score + '?</button>' +
+      '</div>' +
+      detailFor(article) +
+    '</article>';
+  }
+
+  function renderSide(article, query) {
+    return '<article' + storyAttrs(article, 'side') + '>' +
+      '<div class="side__kicker">' +
+        scoreButton(article, 'side__score') +
+        metaFilter('category', categoryOf(article), 'side__topic') +
+      '</div>' +
+      '<h3 class="side__title">' + storyLink(article, query, 'side__link') + '</h3>' +
+      '<p class="side__meta">' + metaLine([metaSource(article), metaAge(article)]) + '</p>' +
+      detailFor(article) +
+    '</article>';
+  }
+
+  function renderPick(article, query) {
+    var summary = usableSummary(article);
+    return '<li' + storyAttrs(article, 'pick') + '>' +
+      scoreButton(article, 'pick__score') +
+      '<div class="pick__body">' +
+        '<h3 class="pick__title">' + storyLink(article, query, 'pick__link') + '</h3>' +
+        (summary ? '<p class="pick__summary">' + escapeHtml(summary) + '</p>' : '') +
+        storyMeta([metaSource(article), metaTopic(article), metaAge(article),
+                   metaAlso(article)], article) +
+        detailFor(article) +
+      '</div>' +
+    '</li>';
+  }
+
+  function renderWorth(article, query, withTopic) {
+    return '<li' + storyAttrs(article, 'worth') + '>' +
+      scoreButton(article, 'worth__score') +
+      '<div class="worth__body">' +
+        '<h3 class="worth__title">' + storyLink(article, query, 'worth__link') + '</h3>' +
+        storyMeta([metaSource(article), withTopic ? metaTopic(article) : '',
+                   metaAge(article), withTopic ? metaAlso(article) : ''], article) +
+        detailFor(article) +
+      '</div>' +
+    '</li>';
+  }
+
+  function renderRestItem(article, query) {
+    return '<li' + storyAttrs(article, 'restitem') + '>' +
+      scoreButton(article, 'restitem__score') +
+      '<h3 class="restitem__title">' + storyLink(article, query, 'restitem__link') + '</h3>' +
+      newTag(article, true) +
+      detailFor(article) +
+    '</li>';
+  }
+
+  // Column-down reading order, split as evenly as the count allows: the
+  // first n % 3 columns take one extra, so ten stories land 4 / 3 / 3.
+  function renderRest(items, query) {
+    var base = Math.floor(items.length / REST_COLUMNS);
+    var extra = items.length % REST_COLUMNS;
+    var columns = [];
+    var cursor = 0;
+    for (var c = 0; c < REST_COLUMNS; c++) {
+      var size = base + (c < extra ? 1 : 0);
+      columns.push(items.slice(cursor, cursor + size));
+      cursor += size;
     }
+    return '<div class="rest">' + columns.map(function (column) {
+      return '<ol class="rest__col">' + column.map(function (article) {
+        return renderRestItem(article, query);
+      }).join('') + '</ol>';
+    }).join('') + '</div>';
+  }
 
-    if (state.sort !== 'recent') {
-      return [{
-        label: state.sort === 'mixed' ? 'Mixed' : 'Top signal',
-        sub: state.sort === 'mixed' ? 'Balanced across sources' : 'Ranked stories',
-        articles: articles
-      }];
-    }
+  function bandHead(label, range) {
+    return '<header class="band__head">' +
+      '<h2 class="band__label">' + escapeHtml(label) + '</h2>' +
+      '<span class="band__range">' + escapeHtml(range) + '</span>' +
+      '<span class="band__rule" aria-hidden="true"></span>' +
+    '</header>';
+  }
 
+  function renderLoadMore(shown, total) {
+    if (shown >= total) return '';
+    return '<div class="loadmore">' +
+      '<button type="button" class="pill pill--outline pill--lg" data-act="load-more">' +
+      'Load more · ' + shown + ' of ' + total + '</button></div>';
+  }
+
+  // `articles` is the page already cut to the current limit; `total` is how
+  // many qualify. Bands are cut by position, so loading more only ever adds
+  // to the last band and never moves a story between bands.
+  function renderToday(articles, query, total) {
+    var hero = articles.slice(0, HERO_SIZE);
+    var out = '<section class="hero" aria-label="Top stories">' +
+      renderLead(hero[0], query) +
+      (hero.length > 1
+        ? '<div class="hero__side">' + hero.slice(1).map(function (article) {
+            return renderSide(article, query);
+          }).join('') + '</div>'
+        : '') +
+    '</section>';
+
+    BANDS.forEach(function (band) {
+      var items = articles.slice(band.from - 1,
+        band.to === Infinity ? undefined : band.to);
+      if (!items.length) return;
+      var last = band.from + items.length - 1;
+      var range = '#' + band.from + (last > band.from ? '–' + last : '');
+      var body;
+      if (band.key === 'top') {
+        body = '<ol class="band__list">' + items.map(function (article) {
+          return renderPick(article, query);
+        }).join('') + '</ol>';
+      } else if (band.key === 'worth') {
+        body = '<ol class="band__list">' + items.map(function (article) {
+          return renderWorth(article, query, false);
+        }).join('') + '</ol>';
+      } else {
+        body = renderRest(items, query);
+      }
+      out += '<section class="band band--' + band.key + '">' +
+        bandHead(band.label, range) + body + '</section>';
+    });
+
+    return out + renderLoadMore(articles.length, total);
+  }
+
+  // Day headers only earn their space when the list is in date order, which
+  // is the whole point of this view.
+  function renderLatest(articles, query, total) {
     var groups = [];
     var current = null;
     articles.forEach(function (article) {
       var day = dayBucket(ageOf(article).date);
       if (!current || current.label !== day) {
-        current = { label: day, sub: '', articles: [] };
+        current = { label: day, articles: [] };
         groups.push(current);
       }
       current.articles.push(article);
     });
-    groups.forEach(function (group) {
-      group.sub = plural(group.articles.length, 'story', 'stories');
-    });
-    return groups;
-  }
 
-  function renderFeed(articles, query, total) {
-    var position = 0;
-
-    var stream = feedGroups(articles).map(function (group) {
-      return '<section class="daygroup">' +
-        '<div class="daygroup__label">' +
-          '<h2 class="daygroup__title">' + escapeHtml(group.label) + '</h2>' +
-          '<p class="daygroup__sub">' + escapeHtml(group.sub) + '</p>' +
-        '</div>' +
-        '<ol class="daygroup__list">' + group.articles.map(function (article) {
-          position++;
-          return renderRow(article, query, {
-            className: 'row--feed',
-            position: position < 10 ? '0' + position : String(position),
-            meta: metaLine([metaSource(article), metaTopic(article),
-                            metaAge(article), metaAlso(article)])
-          });
+    return groups.map(function (group) {
+      return '<section class="band band--day">' +
+        bandHead(group.label, plural(group.articles.length, 'story', 'stories')) +
+        '<ol class="band__list">' + group.articles.map(function (article) {
+          return renderWorth(article, query, true);
         }).join('') + '</ol>' +
       '</section>';
-    }).join('');
-
-    return stream +
-      '<div class="streamend">' +
-        (articles.length < total
-          ? '<button type="button" class="btn btn--outline btn--sm" data-act="load-more">' +
-            'Load more articles ↓</button>'
-          : '<span></span>') +
-        '<span class="streamend__count">' + articles.length + ' of ' +
-        plural(total, 'article') + '</span>' +
-      '</div>';
+    }).join('') + renderLoadMore(articles.length, total);
   }
 
   /* -- Categories --------------------------------------------------------- */
@@ -1022,10 +1181,6 @@
         '<p class="srccard__since">' + escapeHtml(since) +
         (row.http_status ? ' · HTTP ' + row.http_status : '') + '</p>' +
       '</div>' +
-      '<footer class="srccard__foot">' +
-        '<button type="button" class="more" data-act="manage-source"' +
-        ' data-value="' + escapeHtml(row.name) + '">Fix this source →</button>' +
-      '</footer>' +
     '</section>';
   }
 
@@ -1060,7 +1215,7 @@
       return;
     }
 
-    if (state.view === 'categories') {
+    if (state.view === 'topics') {
       var topics = '';
       for (var t = 0; t < 4; t++) {
         topics += '<section class="topic">' +
@@ -1075,10 +1230,10 @@
     }
 
     var feed = '';
-    for (var f = 0; f < 4; f++) feed += rows;
-    el.grid.innerHTML = '<section class="daygroup">' +
-      '<div class="daygroup__label"><span class="skeleton skeleton--label"></span></div>' +
-      '<div class="daygroup__list">' + feed + '</div></section>';
+    for (var f = 0; f < 3; f++) feed += rows;
+    el.grid.innerHTML = '<section class="band band--skeleton">' +
+      '<header class="band__head"><span class="skeleton skeleton--label"></span></header>' +
+      '<div class="band__list">' + feed + '</div></section>';
   }
 
   function renderState(iconName, title, body, bodyClass, action) {
@@ -1091,17 +1246,22 @@
     '</div>';
   }
 
-  function renderFreshness() {
-    el.lastUpdated.textContent = relativePast(state.lastSync);
-    el.nextSync.textContent = state.nextSync
-      ? 'next sync ' + relativeFuture(state.nextSync)
-      : (state.stats && state.stats.refresh_mode === 'check' ? 'checks scheduled every 30 min' : 'no schedule');
-
-    var dot = 'live';
-    if (state.job && state.job.state === 'running') dot = 'syncing';
-    else if (state.pollFailures > 0 || (state.stats && state.stats.storage_error)) dot = 'offline';
-    else if (state.lastSync && Date.now() - state.lastSync.getTime() > 3600000) dot = 'stale';
-    el.statusDot.dataset.state = dot;
+  // Today's date, then how much of the corpus the page is showing. The date
+  // is the reader's, not the scrape's: freshness problems are the status
+  // logic's job, not the masthead's.
+  function renderDateline() {
+    var now = new Date();
+    var date;
+    try {
+      date = now.toLocaleDateString('en-GB', { weekday: 'long' }) + ', ' +
+        now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    } catch (error) {
+      date = now.toDateString();
+    }
+    var count = state.status === 'ready'
+      ? ' · ' + renderedArticles().length + ' of ' + plural(corpusTotal(), 'story', 'stories')
+      : '';
+    el.dateline.textContent = date + count;
   }
 
   /* == Status ==============================================================
@@ -1152,7 +1312,7 @@
         label: state.health.failing + ' failing',
         text: plural(state.health.failing, 'source') + ' stopped returning headlines, ' +
               'so parts of the feed are missing.',
-        action: { label: 'Review sources', handler: openSources }
+        action: { label: 'Review sources', handler: function () { selectView('sources'); } }
       });
     }
 
@@ -1211,17 +1371,14 @@
       : '');
   }
 
-  // The head is the same component in all four views, and in three of them it
-  // is one line of count. The title it used to carry is now the hidden h1: the
-  // nav above has already said which view this is.
+  // The view's title is the hidden h1 and the document title: the tabs have
+  // already said which view this is. The visible part is the dateline.
   function renderHead(articles, total) {
-    var copy = VIEW_COPY[state.view] || VIEW_COPY.feed;
+    var title = VIEW_TITLES[state.view] || VIEW_TITLES.today;
 
-    el.viewHead.dataset.view = state.view;
-    document.title = copy.title + ' · High Signal';
-    el.viewTitle.textContent = copy.title;
-    el.sortSwitch.hidden = state.view !== 'feed';
-    if (el.search.placeholder !== copy.search) el.search.placeholder = copy.search;
+    document.title = title + ' · High Signal';
+    el.viewTitle.textContent = title;
+    renderDateline();
 
     if (state.status !== 'ready') {
       el.resultCount.textContent = '';
@@ -1253,7 +1410,7 @@
   // view with nothing to index -- loading, or a search that matched nothing --
   // still owes its one column the full width.
   function renderReading(groups) {
-    var showIndex = state.view === 'categories' && state.status === 'ready' &&
+    var showIndex = state.view === 'topics' && state.status === 'ready' &&
                     Boolean(groups && groups.length);
     el.reading.dataset.index = showIndex ? 'on' : 'off';
     el.catIndex.hidden = !showIndex;
@@ -1263,7 +1420,6 @@
 
   function render() {
     el.grid.dataset.view = state.view;
-    el.unreadBtn.setAttribute('aria-checked', state.unreadOnly ? 'true' : 'false');
 
     renderFilters();
     renderStatus();
@@ -1286,12 +1442,9 @@
 
     var articles = visibleArticles();
     var query = state.query.trim();
-    var total = corpus().filter(function (a) {
-      return state.view === 'saved' || !isHidden(a.id);
-    }).length;
+    var total = corpusTotal();
     var scrollY = window.scrollY;
 
-    renderFreshness();
     renderHead(articles, total);
 
     if (!articles.length) {
@@ -1300,14 +1453,17 @@
       return;
     }
 
-    if (state.view === 'feed' || state.view === 'saved') {
+    if (isPaged()) {
       renderReading(null);
-      el.grid.innerHTML = renderFeed(articles.slice(0, state.limit), query, articles.length);
+      var page = articles.slice(0, state.limit);
+      el.grid.innerHTML = state.view === 'today'
+        ? renderToday(page, query, articles.length)
+        : renderLatest(page, query, articles.length);
       window.scrollTo(0, scrollY);
       return;
     }
 
-    if (state.view === 'categories') {
+    if (state.view === 'topics') {
       var topics = groupBy(articles, categoryOf);
 
       // The taxonomy has an editorial order of its own; pinning promotes a
@@ -1366,11 +1522,11 @@
   // page rather than the last thing clicked, so scrolling away from a topic
   // moves the marker with it.
   function updateActiveTopic() {
-    if (state.view !== 'categories') return;
+    if (state.view !== 'topics') return;
     var sections = el.grid.querySelectorAll('.topic[id]');
     if (!sections.length) return;
 
-    var offset = document.querySelector('.appbar').getBoundingClientRect().bottom + 72;
+    var offset = 96;
     var current = sections[0];
     Array.prototype.forEach.call(sections, function (section) {
       if (section.getBoundingClientRect().top <= offset) current = section;
@@ -1388,28 +1544,22 @@
   }
 
   function renderEmpty() {
-    if (state.view === 'saved') {
-      renderState('bookmark', 'Nothing saved yet',
-        'Press s on any headline, or use the bookmark button, to build a reading list. '
-        + 'Saved headlines stay here even after they drop out of the feed.');
-      return;
-    }
     if (isFiltered()) {
       renderState('inbox', 'Nothing matches',
         'No headlines clear these filters.', '',
         { act: 'clear-filters', label: 'Clear filters' });
       return;
     }
-    renderState('inbox', 'No headlines cached yet',
-      'Run a scrape to pull the sources in.', '',
-      { act: 'retry-scrape', label: 'Re-scrape sources' });
+    renderState('inbox', 'No headlines yet',
+      'Sources are scraped on a schedule. Check back after the next run.', '',
+      { act: 'retry', label: 'Check again' });
   }
 
   /* == Selection and keyboard navigation =================================== */
 
   function visibleIds() {
     return Array.prototype.map.call(
-      el.grid.querySelectorAll('.row[data-id]'),
+      el.grid.querySelectorAll('[data-item][data-id]'),
       function (row) { return row.dataset.id; });
   }
 
@@ -1423,10 +1573,10 @@
   }
 
   function select(id, scrollIntoView) {
-    var previous = el.grid.querySelector('.row[data-selected]');
+    var previous = el.grid.querySelector('[data-item][data-selected]');
     if (previous) previous.removeAttribute('data-selected');
     state.selectedId = id;
-    var row = id && el.grid.querySelector('.row[data-id="' + cssEscape(id) + '"]');
+    var row = id && el.grid.querySelector('[data-item][data-id="' + cssEscape(id) + '"]');
     if (!row) return;
     row.dataset.selected = 'true';
     if (scrollIntoView) row.scrollIntoView({ block: 'nearest' });
@@ -1445,7 +1595,7 @@
   function openArticle(article, viaKeyboard) {
     if (!article) return;
     markRead(article.id, true);
-    var row = el.grid.querySelector('.row[data-id="' + cssEscape(article.id) + '"]');
+    var row = el.grid.querySelector('[data-item][data-id="' + cssEscape(article.id) + '"]');
     if (row) row.dataset.read = 'true';
     if (viaKeyboard) window.open(safeUrl(article.link), '_blank', 'noopener');
   }
@@ -1457,14 +1607,6 @@
     render();
     select(id, true);
     if (opening) loadSummary(articleById(id));
-  }
-
-  function handleSave(article) {
-    if (!article) return;
-    var saved = toggleSaved(article);
-    render();
-    select(article.id);
-    toast('success', saved ? 'Saved to reading list' : 'Removed from saved');
   }
 
   function handleHide(article) {
@@ -1587,26 +1729,6 @@
         return articleSortTime(b) - articleSortTime(a) || scoreOf(b) - scoreOf(a);
       });
     }
-    if (sort === 'mixed') {
-      var buckets = {};
-      articles.sort(function (a, b) { return scoreOf(b) - scoreOf(a); })
-        .forEach(function (article) {
-          (buckets[article.source] = buckets[article.source] || []).push(article);
-        });
-      var names = Object.keys(buckets).sort(function (a, b) {
-        return scoreOf(buckets[b][0]) - scoreOf(buckets[a][0]) || a.localeCompare(b);
-      });
-      var mixed = [];
-      var largest = names.reduce(function (size, name) {
-        return Math.max(size, buckets[name].length);
-      }, 0);
-      for (var index = 0; index < largest; index++) {
-        names.forEach(function (name) {
-          if (buckets[name][index]) mixed.push(buckets[name][index]);
-        });
-      }
-      return mixed;
-    }
     return articles.sort(function (a, b) {
       return scoreOf(b) - scoreOf(a) || a.source.localeCompare(b.source);
     });
@@ -1647,13 +1769,6 @@
     });
     keys.slice(500).forEach(function (key) { delete browserSummaries[key]; });
     writeJson('hs.summaries', browserSummaries);
-
-    if (savedIndex[article.id]) {
-      savedIndex[article.id].summary = article.summary;
-      savedIndex[article.id].summary_source = article.summary_source;
-      savedIndex[article.id].summary_error = article.summary_error;
-      writeJson('hs.saved', store.saved);
-    }
   }
 
   function loadSummary(article) {
@@ -1680,34 +1795,14 @@
       });
   }
 
-  // The two threshold buttons are labelled from the server's bands, so the
-  // filter can never offer a cut that no longer means anything (the old 65+
-  // button filtered nothing at all once every score sat above it).
-  function syncScoreSwitch() {
-    var bands = [0, state.thresholds.mid, state.thresholds.high];
-    Array.prototype.forEach.call(el.scoreSwitch.children, function (button, index) {
-      var score = bands[index];
-      if (score === undefined) return;
-      button.dataset.score = String(score);
-      button.textContent = score ? score + '+' : 'All';
-    });
-    checkRadios(el.scoreSwitch, 'score', state.minScore);
-  }
-
+  // The signal floor is a fixed All / 80+ / 90+ now, chosen for where real
+  // scores sit; the server's thresholds still colour the source-tool preview.
   function applyStats(stats) {
     state.stats = stats;
-    if (stats && stats.thresholds) {
-      state.thresholds = stats.thresholds;
-      syncScoreSwitch();
-    }
+    if (stats && stats.thresholds) state.thresholds = stats.thresholds;
     state.lastSync = parseDate(stats && stats.last_update) || state.lastSync;
-    state.nextSync = parseDate(stats && stats.next_update);
     if (stats && stats.refresh) followJob(stats.refresh);
     var checkMode = stats && stats.refresh_mode === 'check';
-    el.refreshBtn.title = checkMode
-      ? 'Check the latest saved feed. Sources are checked on a 30-minute schedule.'
-      : 'Re-scrape sources';
-    el.refreshBtn.setAttribute('aria-label', checkMode ? 'Check for updates' : 'Re-scrape sources');
     el.refreshFromDialog.textContent = checkMode ? 'Check for updates' : 'Re-scrape now';
   }
 
@@ -1744,7 +1839,6 @@
       console.error(error);
       state.pollFailures++;
       if (silent) {
-        renderFreshness();
         renderStatus();
       } else {
         state.status = 'error';
@@ -1755,7 +1849,7 @@
   }
 
   function applyDashboard(dashboard, silent) {
-      var articles = sortedDashboardArticles(dashboard.articles || [], state.sort);
+      var articles = sortedDashboardArticles(dashboard.articles || [], 'score');
       articles.forEach(restoreSummary);
       applyStats(dashboard.stats);
       applyHealth(dashboard.sources);
@@ -1776,7 +1870,6 @@
           state.pending = articles;
           state.pendingCount = fresh.length;
           showNewPill();
-          renderFreshness();
           renderStatus();
           return dashboard;
         }
@@ -1813,15 +1906,17 @@
 
   /* == Refresh job ========================================================= */
 
+  // No longer offered from the header or the keyboard -- scraping runs on its
+  // schedule -- but still reached from the sources dialog and the status
+  // panel's fix-it action.
   function refresh() {
-    el.refreshBtn.disabled = true;
     fetchJson('/api/refresh', { method: 'POST' })
       .then(function (result) {
         if (result.status === 'checked') {
           return load({ silent: true }).then(function () {
             applyPending();
             toast('success', result.message);
-          }).finally(function () { el.refreshBtn.disabled = false; });
+          });
         }
         followJob(result.job);
 
@@ -1848,11 +1943,9 @@
           : 'Scraping ' + (state.health ? state.health.total : 'all') + ' sources…');
       })
       .catch(function (error) {
-        el.refreshBtn.disabled = false;
         // A refresh that cannot even reach the server is the same connectivity
-        // problem the status dot reports, so say so there too.
+        // problem the status logic reports, so say so there too.
         state.pollFailures++;
-        renderFreshness();
         renderStatus();
         toast('error', error.message || 'Could not refresh the feed.');
       });
@@ -1866,7 +1959,6 @@
     renderJob();
 
     if (!job || job.state !== 'running') {
-      el.refreshBtn.disabled = false;
       if (state.jobTimer) {
         clearTimeout(state.jobTimer);
         state.jobTimer = null;
@@ -1874,7 +1966,6 @@
       return;
     }
 
-    el.refreshBtn.disabled = true;
     if (state.jobTimer) return;
 
     var tick = function () {
@@ -1889,7 +1980,6 @@
           return;
         }
 
-        el.refreshBtn.disabled = false;
         if (!wasRunning) return;
 
         if (next.state === 'error') {
@@ -1914,7 +2004,6 @@
     var job = state.job;
     var running = job && job.state === 'running';
     el.progress.hidden = !running;
-    el.refreshBtn.style.animation = running ? 'spin 1s linear infinite' : '';
 
     if (!running) return;
 
@@ -1923,7 +2012,6 @@
     el.progressBar.style.width = Math.round((done / total) * 100) + '%';
     el.progressLabel.textContent = done + '/' + total +
       (job.source ? ' · ' + job.source : ' · finishing up');
-    renderFreshness();
   }
 
   /* == Sources dialog ====================================================== */
@@ -2427,7 +2515,6 @@
     try {
       var params = new URLSearchParams();
       params.set('view', state.view);
-      params.set('sort', state.sort);
       if (state.source) params.set('source', state.source);
       if (state.category) params.set('category', state.category);
       if (state.minScore) params.set('min_score', String(state.minScore));
@@ -2451,6 +2538,7 @@
   }
 
   function selectScore(score, options) {
+    if (SCORE_FLOORS.indexOf(score) === -1) score = 0;
     state.minScore = score;
     resetPaging();
     writePref('hs.minScore', String(score));
@@ -2459,31 +2547,36 @@
     if (!options || !options.quiet) render();
   }
 
+  // The drawer tabs overlap, so stacking is part of the state: the open one
+  // sits on top and the rest step down from left to right.
+  function syncViewTabs(view) {
+    var depth = 3;
+    Array.prototype.forEach.call(el.viewSwitch.children, function (tab) {
+      var current = tab.dataset.view === view;
+      if (current) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+      tab.style.zIndex = current ? 5 : Math.max(depth--, 1);
+    });
+
+    // On a narrow screen the tabs scroll sideways; keep the open one in view.
+    var strip = el.viewSwitch;
+    var open = strip.querySelector('[aria-current]');
+    if (open && strip.scrollWidth > strip.clientWidth) {
+      var offset = open.getBoundingClientRect().left - strip.getBoundingClientRect().left;
+      strip.scrollLeft += offset - (strip.clientWidth - open.offsetWidth) / 2;
+    }
+  }
+
   function selectView(view, options) {
-    if (VIEWS.indexOf(view) === -1) view = 'feed';
+    view = VIEW_ALIASES[view] || view;
+    if (VIEWS.indexOf(view) === -1) view = 'today';
     state.view = view;
     state.expandedId = null;
     resetPaging();
     writePref('hs.view', view);
-    checkRadios(el.viewSwitch, 'view', view);
+    syncViewTabs(view);
     syncUrl();
     if (!options || !options.quiet) render();
-  }
-
-  // The bundled snapshot contains the whole corpus, so sorting is immediate
-  // and never creates another Worker request.
-  function selectSort(sort, options) {
-    if (SORTS.indexOf(sort) === -1) sort = 'score';
-    state.sort = sort;
-    resetPaging();
-    writePref('hs.sort', sort);
-    checkRadios(el.sortSwitch, 'sort', sort);
-    syncUrl();
-    if (options && options.reload) {
-      state.articles = sortedDashboardArticles(state.articles, sort);
-      if (state.pending) state.pending = sortedDashboardArticles(state.pending, sort);
-      render();
-    }
   }
 
   function setFilter(kind, value) {
@@ -2499,7 +2592,6 @@
       state.source = '';
       state.category = '';
       state.query = '';
-      state.unreadOnly = false;
       el.search.value = '';
       selectScore(0, { quiet: true });
     }
@@ -2507,16 +2599,8 @@
     if (kind === 'score') selectScore(0, { quiet: true });
     if (kind === 'source') state.source = '';
     if (kind === 'category') state.category = '';
-    if (kind === 'unread') state.unreadOnly = false;
     resetPaging();
     syncUrl();
-    render();
-  }
-
-  function setUnreadOnly(value) {
-    state.unreadOnly = value;
-    resetPaging();
-    writePref('hs.unread', value ? '1' : '0');
     render();
   }
 
@@ -2530,9 +2614,7 @@
     };
   }
 
-  // Radiogroups owe the keyboard arrow keys and Home/End, not just clicks. The
-  // three groups look nothing alike -- nav tabs, underlined tabs, a segmented
-  // control -- so this matches on the data attribute they do share.
+  // Radiogroups owe the keyboard arrow keys and Home/End, not just clicks.
   function wireSegment(container, attribute, onSelect) {
     container.addEventListener('click', function (event) {
       var button = event.target.closest('[data-' + attribute + ']');
@@ -2562,12 +2644,14 @@
     selectScore(Number(value));
   });
 
-  wireSegment(el.viewSwitch, 'view', function (value) {
-    selectView(value);
-  });
-
-  wireSegment(el.sortSwitch, 'sort', function (value) {
-    if (value !== state.sort) selectSort(value, { reload: true });
+  // The tabs are links, so a modified click still opens the view in a new
+  // tab; a plain one switches in place.
+  el.viewSwitch.addEventListener('click', function (event) {
+    var tab = event.target.closest('[data-view]');
+    if (!tab || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey ||
+        event.button !== 0) return;
+    event.preventDefault();
+    if (tab.dataset.view !== state.view) selectView(tab.dataset.view);
   });
 
   el.search.addEventListener('input', debounce(function () {
@@ -2576,12 +2660,9 @@
     render();
   }, 120));
 
-  el.unreadBtn.addEventListener('click', function () { setUnreadOnly(!state.unreadOnly); });
-  el.refreshBtn.addEventListener('click', refresh);
   el.refreshFromDialog.addEventListener('click', refresh);
   el.newPill.addEventListener('click', applyPending);
   el.helpBtn.addEventListener('click', function () { el.helpDialog.showModal(); });
-  el.sourcesBtn.addEventListener('click', function () { openSources(); });
   el.statusChip.addEventListener('click', function (event) {
     event.stopPropagation();
     var open = el.statusPanel.hidden;
@@ -2608,7 +2689,7 @@
     if (!trigger) return;
 
     var act = trigger.dataset.act;
-    var rowNode = trigger.closest('.row[data-id]');
+    var rowNode = trigger.closest('[data-item][data-id]');
     var article = rowNode ? articleById(rowNode.dataset.id) : null;
 
     if (act === 'open') {
@@ -2620,7 +2701,6 @@
     event.preventDefault();
 
     if (act === 'expand') toggleExpanded(rowNode.dataset.id);
-    else if (act === 'save') handleSave(article);
     else if (act === 'hide') handleHide(article);
     else if (act === 'toggle-read') {
       markRead(article.id, !isRead(article.id));
@@ -2636,14 +2716,12 @@
       render();
     } else if (act === 'filter-source') setFilter('source', trigger.dataset.value);
     else if (act === 'filter-category') setFilter('category', trigger.dataset.value);
-    else if (act === 'manage-source') openSources(trigger.dataset.value);
     else if (act === 'clear-filters') dropFilter('all');
     else if (act === 'retry') load();
-    else if (act === 'retry-scrape') refresh();
   });
 
   el.grid.addEventListener('mousedown', function (event) {
-    var row = event.target.closest('.row[data-id]');
+    var row = event.target.closest('[data-item][data-id]');
     if (row) select(row.dataset.id);
   });
 
@@ -2737,8 +2815,8 @@
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    toast('success', plural(store.saved.length, 'saved item') + ' and ' +
-      plural(store.read.length, 'read headline') + ' saved to a file');
+    toast('success', plural(store.read.length, 'read headline') + ' and ' +
+      plural(store.hidden.length, 'hidden headline') + ' saved to a file');
   }
 
   el.stateFile.addEventListener('change', function () {
@@ -2753,7 +2831,6 @@
     file.text().then(function (text) {
       var added = mergeReadingState(JSON.parse(text));
       var counts = [
-        added.saved ? plural(added.saved, 'saved item') : '',
         added.read ? plural(added.read, 'read headline') : '',
         added.hidden ? plural(added.hidden, 'hidden headline') : '',
         added.pinned ? plural(added.pinned, 'pinned category') : ''
@@ -2989,9 +3066,6 @@
       case ' ':
         if (article) { event.preventDefault(); toggleExpanded(article.id); }
         break;
-      case 's':
-        if (article) { event.preventDefault(); handleSave(article); }
-        break;
       case 'm':
         if (article) {
           event.preventDefault();
@@ -3003,9 +3077,6 @@
       case 'x':
         if (article) { event.preventDefault(); handleHide(article); }
         break;
-      case 'u': event.preventDefault(); setUnreadOnly(!state.unreadOnly); break;
-      case 'r': event.preventDefault(); refresh(); break;
-      case 'g': event.preventDefault(); openSources(); break;
       case '/':
         event.preventDefault();
         el.search.focus();
@@ -3015,40 +3086,13 @@
         event.preventDefault();
         el.helpDialog.showModal();
         break;
-      case '1': selectView('feed'); break;
-      case '2': selectView('categories'); break;
-      case '3': selectView('sources'); break;
-      case '4': selectView('saved'); break;
+      case '1': selectView('today'); break;
+      case '2': selectView('latest'); break;
+      case '3': selectView('topics'); break;
+      case '4': selectView('sources'); break;
       default: break;
     }
   });
-
-  /* == Measured header height ==============================================
-     --sticky-top is the token every sticky offset and scroll-margin is built
-     from: the category index, the day label, the new-items pill and the topic
-     anchors all sit at `calc(var(--sticky-top) + <a step>)`. park.css and the
-     breakpoints give it the height the header has at each width, which is
-     right until the header wraps at a size nobody measured -- a longer
-     masthead, a fifth view, a narrower phone -- and then all four land
-     underneath it.
-
-     So the CSS values are the pre-JS fallback and this is the truth: the real
-     height, rounded up to the 4px grid the token lives on, rewritten whenever
-     the header changes size. It is deliberately not --appbar-h: that one sets
-     the bar's own row height, and writing a measurement back into it would
-     make the bar grow off its own output. */
-  function syncStickyTop(bar) {
-    var height = Math.ceil(bar.getBoundingClientRect().height / 4) * 4;
-    document.documentElement.style.setProperty('--sticky-top', height + 'px');
-  }
-
-  var appbar = document.querySelector('.appbar');
-  if (appbar && window.ResizeObserver) {
-    new ResizeObserver(function () { syncStickyTop(appbar); }).observe(appbar);
-  } else if (appbar) {
-    syncStickyTop(appbar);
-    window.addEventListener('resize', function () { syncStickyTop(appbar); });
-  }
 
   /* == Boot ================================================================ */
 
@@ -3057,8 +3101,7 @@
   // Read every stored and linked preference before applying any of them: each
   // selector rewrites the URL, which would clobber the others mid-boot.
   var boot = {
-    view: readParam('view') || readPref('hs.view', 'feed'),
-    sort: readParam('sort') || readPref('hs.sort', 'score'),
+    view: readParam('view') || readPref('hs.view', 'today'),
     score: Number(readParam('min_score') || readPref('hs.minScore', '0')) || 0,
     source: readParam('source') || '',
     category: readParam('category') || ''
@@ -3066,11 +3109,16 @@
 
   state.source = boot.source;
   state.category = boot.category;
-  state.unreadOnly = readPref('hs.unread', '0') === '1';
 
-  selectSort(boot.sort);
   selectView(boot.view, { quiet: true });
   selectScore(boot.score, { quiet: true });
+
+  // Stamp the visit on the way out, not on the way in, so the tags are there
+  // for as long as the reader is.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stampVisit();
+  });
+  window.addEventListener('pagehide', stampVisit);
 
   load().catch(function () {});
 
@@ -3084,6 +3132,6 @@
     }
   });
   setInterval(function () {
-    if (state.status === 'ready') { renderFreshness(); renderStatus(); }
+    if (state.status === 'ready') { renderDateline(); renderStatus(); }
   }, 20000);
 })();

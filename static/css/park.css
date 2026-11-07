@@ -18,27 +18,53 @@
    Theme: accent "muted blue", gray "warm ivory", radius "md".
 --------------------------------------------------------------------------- */
 
+/* == Tokens: A5 "Clay + slate" ===========================================
+   The front page's own palette, f4efe6-2b2d33-d9643a-8a4b2f-c9b8a6. The
+   accent is the only saturated colour on the page and it appears in exactly
+   one place, the lead story's badge; every other score is ink. --muted and
+   --deep both clear 4.5:1 on --bg, so neither may be lightened. */
+:root,
+[data-theme='light'] {
+  --bg: #f4efe6;          /* page */
+  --ink: #2b2d33;         /* text, active tab, primary button, rules */
+  --on-ink: #f4efe6;      /* text on an ink fill */
+  --accent: #d9643a;      /* the lead badge, and nothing else */
+  --on-accent: #2b2d33;   /* text on the accent: dark reads better than cream */
+  --deep: #8a4b2f;        /* dateline, lead topic, inactive tab numbers, links */
+  --soft: #c9b8a6;        /* the "Why NN?" outline */
+  --muted: #636365;       /* meta, summaries, labels */
+  --line: #d4d0c9;        /* hairlines between rows */
+  --tint: #e4dfd8;        /* search field, signal floor track, quiet chip */
+}
+
 /* == Tokens: light ======================================================== */
 :root,
 [data-theme='light'] {
-  --gray-1: #fcfcf9;  --gray-2: #f7f7f1;  --gray-3: #f1f1ea;
-  --gray-4: #eaeae1;  --gray-5: #e4e4da;  --gray-6: #dedfd7;
-  --gray-7: #d1d2c7;  --gray-8: #bbbcaf;  --gray-9: #8d8f84;
-  --gray-10: #83857a; --gray-11: #64665c; --gray-12: #262823;
-  --gray-a2: #55550006; --gray-a3: #3333000f; --gray-a5: #3232091f;
-  --gray-a7: #2e2e0632; --gray-a9: #1d1d0574;
+  /* The Park scales, re-pointed at the clay palette so the topic and source
+     views, the menus and the dialogs sit on the same paper as the front
+     page. Steps keep their Radix meaning. */
+  --gray-1: #faf7f1;  --gray-2: #f7f3ec;  --gray-3: #efe9e0;
+  --gray-4: #e4dfd8;  --gray-5: #dcd6cd;  --gray-6: #d4d0c9;
+  --gray-7: #c4bfb7;  --gray-8: #aca79f;  --gray-9: #8a8784;
+  --gray-10: #7a7877; --gray-11: #636365; --gray-12: #2b2d33;
+  --gray-a2: #4a3a2008; --gray-a3: #4a3a2012; --gray-a5: #3a2c1424;
+  --gray-a7: #2b2d3340; --gray-a9: #2b2d3380;
 
-  --accent-1: #fbfcfd;  --accent-2: #f4f8fa;  --accent-3: #e9eff4;
-  --accent-4: #dce7ee;  --accent-6: #c1d2df;  --accent-7: #a6c0d2;
-  --accent-9: #436581;  --accent-10: #3a5870; --accent-11: #3b5f7c;
-  --accent-a2: #0077bb07; --accent-a3: #00558f0f; --accent-a7: #00447e47;
+  /* The old muted blue is gone: "accent" in the Park sense -- the current
+     thing, the solid button, the focus ring -- is ink, and accent text is
+     the deep clay. */
+  --accent-1: #faf7f1;  --accent-2: #f4efe6;  --accent-3: #ece6dd;
+  --accent-4: #e4dfd8;  --accent-6: #d4d0c9;  --accent-7: #c9b8a6;
+  --accent-9: #2b2d33;  --accent-10: #1d1f24; --accent-11: #8a4b2f;
+  --accent-a2: #2b2d3308; --accent-a3: #2b2d3312; --accent-a7: #2b2d3340;
+  --accent-fg: var(--on-ink);
 
   --jade-3: #e5f5ec;  --jade-6: #a9dbc6;  --jade-9: #2a9a7d;  --jade-11: #1f7c63;
   --amber-3: #fbf3cf; --amber-6: #ecd07f; --amber-9: #e2a12b; --amber-11: #96601a;
   --red-3: #fbeae9;   --red-6: #f2bcb8;   --red-9: #c8514c;   --red-11: #ab3a35;
 
-  --bg-canvas: #faf9f6;
-  --bg-default: #fffefa;
+  --bg-canvas: var(--bg);
+  --bg-default: #f9f6f0;
   --bg-subtle: var(--gray-2);
   --bg-muted: var(--gray-3);
   --bg-emphasized: var(--gray-4);
@@ -63,6 +89,7 @@
   --accent-4: #1e3341;  --accent-6: #2d4a5e;  --accent-7: #375c75;
   --accent-9: #547f9e;  --accent-10: #6291b2; --accent-11: #9ec4dc;
   --accent-a2: #4ba7f916; --accent-a3: #52a9ff3b; --accent-a7: #77c3fe8e;
+  --accent-fg: #ffffff;
 
   --jade-3: #0f2b21;  --jade-6: #1b5344;  --jade-9: #2fa384;  --jade-11: #46d2a9;
   --amber-3: #2d2109; --amber-6: #573e10; --amber-9: #e2a12b; --amber-11: #e8bb56;
@@ -79,6 +106,21 @@
   --shadow-lg: 0 8px 16px #0000007c, 0 0 1px inset var(--gray-a7);
 
   color-scheme: dark;
+
+  /* The A5 palette has no dark design yet, so its tokens map onto the
+     existing dark theme. The accent stays, with the same dark text on it;
+     --deep borrows the warm amber, since the clay brown sinks on a dark
+     page. Provisional until a dark palette is drawn. */
+  --bg: var(--gray-1);
+  --ink: var(--gray-12);
+  --on-ink: var(--gray-1);
+  --accent: #d9643a;
+  --on-accent: #2b2d33;
+  --deep: var(--amber-11);
+  --soft: var(--gray-7);
+  --muted: var(--gray-11);
+  --line: var(--gray-6);
+  --tint: var(--gray-4);
 }
 
 /* Semantic tokens shared by both themes (they resolve through --gray-*). */
@@ -93,7 +135,6 @@
 
   --accent-default: var(--accent-9);
   --accent-emphasized: var(--accent-10);
-  --accent-fg: #ffffff;
   --accent-text: var(--accent-11);
 
   /* radii.md nesting: l1 -> md, l2 -> lg, l3 -> xl. --radius-xs is an
@@ -173,20 +214,14 @@
      per-component numbers so that a column gap and the page margin beside it
      can only ever change together; --gutter-page and --gutter-column are
      redefined inside the breakpoints at the foot of app.css. */
-  --container-max: 82.5rem;  /* 1320px */
-  --gutter-page: var(--space-10);
+  --container-max: 84rem;    /* 1344px: a 1280px column inside 32px margins */
+  --gutter-page: var(--space-8);
   --gutter-column: var(--space-16);
   --gutter-card: var(--space-4);
   --rail-index: 14rem;       /* the category index */
-  --rail-day: 7rem;          /* the feed's day gutter */
-  /* --appbar-h is the height the app bar's own row is told to be. --sticky-top
-     is how far down the page the header actually ends, which is a different
-     number as soon as the jump bar appears or the bar wraps; everything sticky
-     or scroll-anchored measures from that one. dashboard.js overwrites it with
-     the observed height, so the values below and in the breakpoints are the
-     pre-JS fallback rather than the final word. */
-  --appbar-h: var(--space-20);
-  --sticky-top: var(--appbar-h);
+  /* The masthead scrolls away with the page, so nothing sticky has a header
+     to clear; --sticky-top is just the breathing room above a pinned item. */
+  --sticky-top: var(--space-4);
 
   /* Line-length caps. Prose and headlines stop well short of the container.
      These, and the handful of whole-rem widths that cap a single component
@@ -214,10 +249,10 @@
      an addition: Park has no monospace token, and the dashboard needs one for
      scores and machine metadata. Both are safe to swap wholesale -- see the
      type system at the top of app.css. */
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system,
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system,
     BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
     sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
-  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
     Consolas, 'Liberation Mono', 'Courier New', monospace;
 
   --duration-fast: 100ms;
