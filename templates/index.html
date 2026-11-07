@@ -161,7 +161,11 @@
                 </div>
 
                 <div class="masthead__tools">
-                    <label class="search">
+                    <label class="search slant">
+                        <svg class="slant__shape" viewBox="0 0 330 42" preserveAspectRatio="none" aria-hidden="true">
+                            <path class="slant__body" d="M10.5 0.75 L329.25 0.75 L319.5 41.25 L0.75 41.25 Z"/>
+                            <path class="slant__ring" d="M8.16 -3 L333.84 -3 L321.84 45 L-3.84 45 Z"/>
+                        </svg>
                         <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"/></svg>
                         <span class="visually-hidden">Search headlines</span>
                         <input id="search" class="search__input" type="search" autocomplete="off"
@@ -188,8 +192,12 @@
                         </div>
 
                         <div class="menu">
-                            <button id="moreBtn" class="iconbtn" aria-expanded="false"
+                            <button id="moreBtn" class="iconbtn slant" aria-expanded="false"
                                     aria-haspopup="menu" title="Reading tools" aria-label="Reading tools">
+                                <svg class="slant__shape" viewBox="0 0 46 42" preserveAspectRatio="none" aria-hidden="true">
+                                    <path class="slant__body" d="M10.5 0.75 L45.25 0.75 L35.5 41.25 L0.75 41.25 Z"/>
+                                    <path class="slant__ring" d="M8.16 -3 L49.84 -3 L37.84 45 L-3.84 45 Z"/>
+                                </svg>
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-sliders-h"/></svg>
                             </button>
                             <div class="menu__list card" id="moreMenu" hidden>
@@ -237,12 +245,20 @@
                         </div>
                         <input type="file" id="stateFile" accept="application/json,.json" hidden>
 
-                        <button id="helpBtn" class="iconbtn" title="Keyboard shortcuts (?)"
+                        <button id="helpBtn" class="iconbtn slant" title="Keyboard shortcuts (?)"
                                 aria-label="Keyboard shortcuts" aria-haspopup="dialog">
+                            <svg class="slant__shape" viewBox="0 0 46 42" preserveAspectRatio="none" aria-hidden="true">
+                                <path class="slant__body" d="M10.5 0.75 L45.25 0.75 L35.5 41.25 L0.75 41.25 Z"/>
+                                <path class="slant__ring" d="M8.16 -3 L49.84 -3 L37.84 45 L-3.84 45 Z"/>
+                            </svg>
                             <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-help"/></svg>
                         </button>
 
-                        <button id="themeBtn" class="iconbtn" aria-label="Colour theme">
+                        <button id="themeBtn" class="iconbtn slant" aria-label="Colour theme">
+                            <svg class="slant__shape" viewBox="0 0 46 42" preserveAspectRatio="none" aria-hidden="true">
+                                <path class="slant__body" d="M10.5 0.75 L45.25 0.75 L35.5 41.25 L0.75 41.25 Z"/>
+                                <path class="slant__ring" d="M8.16 -3 L49.84 -3 L37.84 45 L-3.84 45 Z"/>
+                            </svg>
                             <svg viewBox="0 0 24 24" aria-hidden="true" data-theme-icon><use href="#i-sun"/></svg>
                         </button>
                     </div>
@@ -288,9 +304,9 @@
                 <div class="floor">
                     <span class="floor__label" id="scoreLabel">Signal floor</span>
                     <div class="floor__track" id="scoreSwitch" role="radiogroup" aria-labelledby="scoreLabel">
-                        <button class="floor__item" role="radio" aria-checked="true"  data-score="0">All</button>
-                        <button class="floor__item" role="radio" aria-checked="false" data-score="80">80+</button>
-                        <button class="floor__item" role="radio" aria-checked="false" data-score="90">90+</button>
+                        <button class="floor__item slant" role="radio" aria-checked="true"  data-score="0"><svg class="slant__shape" viewBox="0 0 52 32" preserveAspectRatio="none" aria-hidden="true"><path class="slant__body" d="M8 0.75 L51.25 0.75 L44 31.25 L0.75 31.25 Z"/><path class="slant__ring" d="M5.66 -3 L55.84 -3 L46.34 35 L-3.84 35 Z"/></svg><span>All</span></button>
+                        <button class="floor__item slant" role="radio" aria-checked="false" data-score="80"><svg class="slant__shape" viewBox="0 0 52 32" preserveAspectRatio="none" aria-hidden="true"><path class="slant__body" d="M8 0.75 L51.25 0.75 L44 31.25 L0.75 31.25 Z"/><path class="slant__ring" d="M5.66 -3 L55.84 -3 L46.34 35 L-3.84 35 Z"/></svg><span>80+</span></button>
+                        <button class="floor__item slant" role="radio" aria-checked="false" data-score="90"><svg class="slant__shape" viewBox="0 0 52 32" preserveAspectRatio="none" aria-hidden="true"><path class="slant__body" d="M8 0.75 L51.25 0.75 L44 31.25 L0.75 31.25 Z"/><path class="slant__ring" d="M5.66 -3 L55.84 -3 L46.34 35 L-3.84 35 Z"/></svg><span>90+</span></button>
                     </div>
                 </div>
             </div>
