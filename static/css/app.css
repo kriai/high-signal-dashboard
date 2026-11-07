@@ -248,19 +248,25 @@ code {
 
 .search:focus-within .search__kbd { opacity: 0; }
 
-/* Reading tools, shortcuts, theme: bare glyphs until hovered or focused. */
+/* Reading tools, shortcuts, theme: three tint tiles with the search field's
+   10.5px slant. Each tile tucks 6.5px under its neighbour, and the row tucks
+   12px back toward the search field, so every visible gap in the header --
+   search to tile, tile to tile, and between the signal floor boxes -- is
+   about 5px. */
 .iconrow {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   height: 2.625rem;
+  margin-left: -12px;
 }
 
 .iconbtn {
   display: grid;
   place-items: center;
-  width: 2.375rem;
+  width: 2.875rem;
   height: 2.625rem;
+  margin-left: -6.5px;
   padding: 0;
   color: var(--muted);
   cursor: pointer;
@@ -269,17 +275,15 @@ code {
 .iconbtn svg { width: 1.0625rem; height: 1.0625rem; }
 .iconbtn .slant__shape { width: 100%; height: 100%; }
 
-/* At rest there is no shape at all; hover, focus and an open menu bring up
-   a tint parallelogram with the search field's slant, and no outline. */
-.iconbtn .slant__body { fill: transparent; stroke: none; }
+.iconbtn .slant__body { fill: var(--tint); stroke: none; }
 
 .iconbtn:hover,
 .iconbtn:focus-visible,
 .iconbtn[aria-expanded='true'] { color: var(--ink); }
 
+/* Hover and an open menu outline the tile in ink; the fill stays. */
 .iconbtn:hover .slant__body,
-.iconbtn:focus-visible .slant__body,
-.iconbtn[aria-expanded='true'] .slant__body { fill: var(--tint); }
+.iconbtn[aria-expanded='true'] .slant__body { fill: var(--tint); stroke: var(--ink); }
 
 /* The status chip still exists and is still kept current; it is parked until
    the A5 header has a place for it. */
@@ -2181,7 +2185,7 @@ kbd {
   .brand__name { font-size: 3rem; }
   .masthead__top { padding-top: var(--space-6); }
   .masthead__tools { width: 100%; }
-  .search { flex: 1; width: auto; }
+  .search { flex: 1; width: auto; min-width: 0; }
 
   .navrow { flex-direction: column; align-items: stretch; gap: 0; }
   .drawers {
@@ -2249,7 +2253,6 @@ kbd {
   .side__title { font-size: 1.25rem; }
   .drawer { width: 9rem; padding: 0 var(--space-5); }
   .floor__label { display: none; }
-  .iconbtn { width: var(--space-8); }
 
   .grid[data-view='sources'] { grid-template-columns: minmax(0, 1fr); }
   .ownerbar { grid-template-columns: minmax(0, 1fr); }
