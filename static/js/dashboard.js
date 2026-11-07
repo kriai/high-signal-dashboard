@@ -1267,9 +1267,10 @@
     '</div>';
   }
 
-  // Today's date, then how much of the corpus the page is showing. The date
-  // is the reader's, not the scrape's: freshness problems are the status
-  // logic's job, not the masthead's.
+  // Today's date and nothing else. The date is the reader's, not the
+  // scrape's: freshness problems are the status logic's job, not the
+  // masthead's. How much is showing is said by Load more and, for screen
+  // readers, by the results summary.
   function renderDateline() {
     var now = new Date();
     var date;
@@ -1279,10 +1280,7 @@
     } catch (error) {
       date = now.toDateString();
     }
-    var count = state.status === 'ready'
-      ? ' · ' + renderedArticles().length + ' of ' + plural(corpusTotal(), 'story', 'stories')
-      : '';
-    el.dateline.textContent = date + count;
+    el.dateline.textContent = date;
   }
 
   /* == Status ==============================================================
