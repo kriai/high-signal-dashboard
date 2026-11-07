@@ -69,6 +69,8 @@
   --bg-muted: var(--gray-3);
   --bg-emphasized: var(--gray-4);
 
+  --scrim: var(--gray-12);
+
   --shadow-xs: 0 1px 2px var(--gray-a5), 0 0 1px var(--gray-a7);
   --shadow-sm: 0 2px 4px var(--gray-a3), 0 0 1px var(--gray-a7);
   --shadow-lg: 0 8px 16px var(--gray-a3), 0 0 1px var(--gray-a7);
@@ -78,49 +80,51 @@
 
 /* == Tokens: dark ========================================================= */
 [data-theme='dark'] {
-  --gray-1: #141412;  --gray-2: #1b1b18;  --gray-3: #232320;
-  --gray-4: #2a2a26;  --gray-5: #31312c;  --gray-6: #3a3a34;
-  --gray-7: #474740;  --gray-8: #5f5f56; --gray-9: #6f6f65;
-  --gray-10: #7d7d73; --gray-11: #b4b4a9; --gray-12: #efefe8;
-  --gray-a2: #f6f6d409; --gray-a3: #faf4d814; --gray-a5: #fdf7d925;
-  --gray-a7: #fffbe040; --gray-a9: #fdfae76d;
+  /* A5 dark: warm slate paper, cream ink. Nothing is brighter than --ink and
+     nothing is pure black; the clay accent still marks only the lead badge. */
+  --bg: #1d1e22;          /* page */
+  --ink: #ddd5c8;         /* text, active tab, primary button, rules */
+  --on-ink: #1d1e22;      /* text on an ink fill */
+  --accent: #d9643a;      /* the lead badge, and nothing else */
+  --on-accent: #1d1e22;   /* text on the accent */
+  --deep: #d29a7a;        /* dateline, lead topic, inactive tab numbers, links */
+  --soft: #6b5f53;        /* the "Why NN?" outline */
+  --muted: #a7a29a;       /* meta, summaries, labels */
+  --line: #3c3b3d;        /* hairlines between rows */
+  --tint: #2c2d2f;        /* search field, signal floor track, quiet chip */
 
-  --accent-1: #10151a;  --accent-2: #141b21;  --accent-3: #1a2833;
-  --accent-4: #1e3341;  --accent-6: #2d4a5e;  --accent-7: #375c75;
-  --accent-9: #547f9e;  --accent-10: #6291b2; --accent-11: #9ec4dc;
-  --accent-a2: #4ba7f916; --accent-a3: #52a9ff3b; --accent-a7: #77c3fe8e;
-  --accent-fg: #ffffff;
+  /* The Park scales, re-pointed at the dark palette the same way the light
+     ones are: --tint at step 3, --line at 6, --muted at 11, --ink at 12. */
+  --gray-1: #212226;  --gray-2: #26272a;  --gray-3: #2c2d2f;
+  --gray-4: #313133;  --gray-5: #363537;  --gray-6: #3c3b3d;
+  --gray-7: #4a4746;  --gray-8: #5d5853;  --gray-9: #7a756e;
+  --gray-10: #8d8880; --gray-11: #a7a29a; --gray-12: #ddd5c8;
+  --gray-a2: #ddd5c808; --gray-a3: #ddd5c812; --gray-a5: #ddd5c824;
+  --gray-a7: #ddd5c840; --gray-a9: #ddd5c880;
+
+  --accent-1: #212226;  --accent-2: #1d1e22;  --accent-3: #2a2a2d;
+  --accent-4: #2c2d2f;  --accent-6: #3c3b3d;  --accent-7: #6b5f53;
+  --accent-9: #ddd5c8;  --accent-10: #cbc3b6; --accent-11: #d29a7a;
+  --accent-a2: #ddd5c808; --accent-a3: #ddd5c812; --accent-a7: #ddd5c840;
+  --accent-fg: var(--on-ink);
 
   --jade-3: #0f2b21;  --jade-6: #1b5344;  --jade-9: #2fa384;  --jade-11: #46d2a9;
   --amber-3: #2d2109; --amber-6: #573e10; --amber-9: #e2a12b; --amber-11: #e8bb56;
   --red-3: #351718;   --red-6: #68302e;   --red-9: #cf5c56;   --red-11: #eb9a95;
 
-  --bg-canvas: var(--gray-1);
-  --bg-default: var(--gray-2);
-  --bg-subtle: var(--gray-3);
-  --bg-muted: var(--gray-4);
-  --bg-emphasized: var(--gray-5);
+  --bg-canvas: var(--bg);
+  --bg-default: #232428;
+  --bg-subtle: var(--gray-2);
+  --bg-muted: var(--gray-3);
+  --bg-emphasized: var(--gray-4);
 
-  --shadow-xs: 0 1px 1px #000000df, 0 0 1px inset var(--gray-a7);
-  --shadow-sm: 0 2px 4px #0000007c, 0 0 1px inset var(--gray-a7);
-  --shadow-lg: 0 8px 16px #0000007c, 0 0 1px inset var(--gray-a7);
+  --scrim: #121316;
+
+  --shadow-xs: 0 1px 1px #121316df, 0 0 1px inset var(--gray-a7);
+  --shadow-sm: 0 2px 4px #1213167c, 0 0 1px inset var(--gray-a7);
+  --shadow-lg: 0 8px 16px #1213167c, 0 0 1px inset var(--gray-a7);
 
   color-scheme: dark;
-
-  /* The A5 palette has no dark design yet, so its tokens map onto the
-     existing dark theme. The accent stays, with the same dark text on it;
-     --deep borrows the warm amber, since the clay brown sinks on a dark
-     page. Provisional until a dark palette is drawn. */
-  --bg: var(--gray-1);
-  --ink: var(--gray-12);
-  --on-ink: var(--gray-1);
-  --accent: #d9643a;
-  --on-accent: #2b2d33;
-  --deep: var(--amber-11);
-  --soft: var(--gray-7);
-  --muted: var(--gray-11);
-  --line: var(--gray-6);
-  --tint: var(--gray-4);
 }
 
 /* Semantic tokens shared by both themes (they resolve through --gray-*). */
