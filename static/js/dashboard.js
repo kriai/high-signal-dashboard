@@ -890,13 +890,34 @@
           staleNote(article) : '') +
       '</p>' +
       '<div class="lead__actions">' +
-        '<a class="pill pill--ink" href="' + escapeHtml(safeUrl(article.link)) + '"' +
-        ' target="_blank" rel="noopener noreferrer" data-act="open">Read story ↗</a>' +
-        '<button type="button" class="pill pill--soft" data-act="expand"' +
-        ' aria-expanded="' + (expanded ? 'true' : 'false') + '">Why ' + score + '?</button>' +
+        '<a class="slant slant--ink lead__btn lead__btn--read" href="' +
+        escapeHtml(safeUrl(article.link)) + '"' +
+        ' target="_blank" rel="noopener noreferrer" data-act="open">' +
+        slantShape(136, 44, 11) + 'Read story ↗</a>' +
+        '<button type="button" class="slant lead__btn lead__btn--why" data-act="expand"' +
+        ' aria-expanded="' + (expanded ? 'true' : 'false') + '">' +
+        slantShape(104, 44, 11) + 'Why ' + score + '?</button>' +
       '</div>' +
       detailFor(article) +
     '</article>';
+  }
+
+  // The file-tab parallelogram behind a control: top edge shifted right by
+  // `slant`, the same lean as the view tabs. The ring is the same shape pushed
+  // 3px outward, shown only for keyboard focus.
+  function slantShape(width, height, slant) {
+    var w = width, h = height, k = slant, d = 3;
+    var s = d * Math.sqrt(h * h + k * k) / h;
+    var r = function (n) { return Math.round(n * 100) / 100; };
+    return '<svg class="slant__shape" viewBox="0 0 ' + w + ' ' + h + '"' +
+      ' preserveAspectRatio="none" aria-hidden="true">' +
+      '<path class="slant__body" d="M' + k + ' 0.75 L' + (w - 0.75) + ' 0.75 L' +
+        (w - k) + ' ' + (h - 0.75) + ' L0.75 ' + (h - 0.75) + ' Z"/>' +
+      '<path class="slant__ring" d="M' + r(k * (1 + d / h) - s) + ' ' + -d +
+        ' L' + r(w + k * d / h + s) + ' ' + -d +
+        ' L' + r(w - k - k * d / h + s) + ' ' + (h + d) +
+        ' L' + r(-k * d / h - s) + ' ' + (h + d) + ' Z"/>' +
+      '</svg>';
   }
 
   function renderSide(article, query) {

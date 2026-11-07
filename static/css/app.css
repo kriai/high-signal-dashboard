@@ -141,20 +141,74 @@ code {
 }
 
 /* A tinted field, no border. The `/` key is its own hint. */
+/* -- Slanted controls ---------------------------------------------------- */
+/* The view tabs' lean, as a parallelogram: the top edge sits `slant` px right
+   of the bottom one. The shape is an SVG behind the label (the control is its
+   own stacking context, so z-index -1 lands behind its content and nowhere
+   else). The ring is the same shape pushed 3px out, for keyboard focus only,
+   so the focus indicator follows the slant instead of a rectangle. */
+.slant {
+  position: relative;
+  z-index: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.slant__shape {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.slant__body {
+  fill: var(--bg);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  transition: fill var(--duration-fast) var(--ease-default);
+}
+
+.slant__ring {
+  display: none;
+  fill: none;
+  stroke: var(--accent-default);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The ring replaces the rectangular outline; it is never removed. */
+.slant:focus-visible { outline: none; }
+.slant:focus-visible .slant__ring { display: inline; }
+
+.slant:hover .slant__body { fill: var(--tint); }
+
+.slant--ink { color: var(--on-ink); }
+.slant--ink .slant__body { fill: var(--ink); }
+.slant--ink:hover .slant__body { fill: color-mix(in srgb, var(--ink) 88%, var(--bg)); }
+
 .search {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  width: 20rem;
+  width: 20.625rem;
   max-width: 100%;
   height: 2.625rem;
-  padding: 0 var(--space-3) 0 0.875rem;
-  border-radius: 4px;
-  background: var(--tint);
+  padding: 0 1.25rem 0 1.375rem;
   cursor: text;
 }
 
-.search:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* The quiet one: a tint fill, no outline, and no hover change. */
+.search .slant__body,
+.search:hover .slant__body { fill: var(--tint); stroke: none; }
+.search:focus-within .slant__ring { display: inline; }
 
 .search__icon {
   flex: none;
@@ -313,28 +367,34 @@ code {
   line-height: var(--leading-sm);
 }
 
-.floor__track {
-  display: flex;
-  padding: 3px;
-  border-radius: var(--radius-full);
-  background: var(--tint);
-}
+.floor__track { display: flex; }
 
+/* Three separate slanted boxes tucked together, the left one on top. */
 .floor__item {
-  min-height: var(--space-8);
-  padding: 0.375rem 0.875rem;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: var(--space-8);
+  margin-right: -4px;
+  padding: 0;
   color: var(--ink);
   font-size: 0.8125rem;
   line-height: var(--leading-sm);
+  font-weight: var(--weight-regular);
   cursor: pointer;
 }
 
-.floor__item:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.floor__item[aria-checked='true'] { background: var(--ink); color: var(--on-ink); }
-.floor__item:focus-visible { border-radius: var(--radius-full); }
+.floor__item:nth-child(1) { z-index: 3; }
+.floor__item:nth-child(2) { z-index: 2; }
+.floor__item:nth-child(3) { z-index: 1; margin-right: 0; }
+.floor__item:focus-visible { z-index: 4; }
+
+.floor__item[aria-checked='true'] { color: var(--on-ink); font-weight: var(--weight-strong); }
+.floor__item[aria-checked='true'] .slant__body { fill: var(--ink); }
+.floor__item[aria-checked='true']:hover .slant__body {
+  fill: color-mix(in srgb, var(--ink) 88%, var(--bg));
+}
 
 .masthead .filters { padding: var(--space-3) 0 0; }
 
@@ -1087,6 +1147,27 @@ code {
 }
 
 .lead__actions { display: flex; flex-wrap: wrap; gap: 0.625rem; }
+
+.lead__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--space-11);
+  padding: 0 1.25rem;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lead__btn--read { min-width: 8.5rem; color: var(--on-ink); font-weight: var(--weight-strong); }
+
+/* Outlined, unfilled: the page shows through until hover or while open. */
+.lead__btn--why { min-width: 6.5rem; font-weight: var(--weight-medium); }
+.lead__btn--why .slant__body { fill: transparent; }
+.lead__btn--why:hover .slant__body,
+.lead__btn--why[aria-expanded='true'] .slant__body { fill: var(--tint); }
 
 .hero__side {
   display: flex;
