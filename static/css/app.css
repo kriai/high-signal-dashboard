@@ -262,20 +262,24 @@ code {
   width: 2.375rem;
   height: 2.625rem;
   padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
 .iconbtn svg { width: 1.0625rem; height: 1.0625rem; }
+.iconbtn .slant__shape { width: 100%; height: 100%; }
+
+/* At rest there is no shape at all; hover, focus and an open menu bring up
+   a tint parallelogram with the search field's slant, and no outline. */
+.iconbtn .slant__body { fill: transparent; stroke: none; }
 
 .iconbtn:hover,
 .iconbtn:focus-visible,
-.iconbtn[aria-expanded='true'] { background: var(--tint); color: var(--ink); }
+.iconbtn[aria-expanded='true'] { color: var(--ink); }
 
-.iconbtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; border-radius: 4px; }
+.iconbtn:hover .slant__body,
+.iconbtn:focus-visible .slant__body,
+.iconbtn[aria-expanded='true'] .slant__body { fill: var(--tint); }
 
 /* The status chip still exists and is still kept current; it is parked until
    the A5 header has a place for it. */
