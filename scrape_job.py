@@ -128,8 +128,10 @@ def _run_d1():
             os.environ.get('PUBLIC_ORIGIN') or 'https://high-signal.invalid')
         manifest = d1.publish(prepared, expected_previous=active)
         print(f'✅ Published {len(snapshot["articles"])} articles as {prepared.id}')
-        print(f'📝 Warmed {snapshot["summary_warm"]["warmed"]}/'
-              f'{snapshot["summary_warm"]["attempted"]} summaries')
+        warm = snapshot['summary_warm']
+        print(f'📝 Warmed {warm["warmed"]}/{warm["attempted"]} summaries; '
+              f'{warm.get("retry_waiting", 0)} waiting to retry, '
+              f'{warm.get("retry_given_up", 0)} given up')
         print('📄 Documents: ' + ', '.join(sorted(manifest['documents'])))
         for key, document in sorted(manifest['documents'].items()):
             if document['byte_count'] > DOCUMENT_BUDGET_BYTES:
