@@ -1,7 +1,7 @@
 """Reusable Python scrape and document preparation, independent of Flask."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 import hashlib
 import json
@@ -13,7 +13,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from d1_store import Document, Publication, D1Error
 from scraper import (CATEGORIES, HighSignalScraper, is_generated_summary,
-                     parse_iso, utc_now)
+                     parse_iso, parse_utc, utc_now)
 from source_config import is_public_url
 
 
@@ -35,6 +35,13 @@ SUMMARY_FIELDS = ('summary', 'summary_source', 'summary_checked_at',
 # is a starting product default, not a measurement; operators can move it with
 # SCRAPE_MIN_SOURCE_COVERAGE once shadow runs show what coverage is normal.
 DEFAULT_MIN_SOURCE_COVERAGE = 0.5
+
+# A failed summary fetch waits this long before each retry, then is left alone:
+# four tries in all. Publishers that refuse Actions runners keep refusing the
+# same addresses, so retrying on every run mostly repeated the same failure.
+SUMMARY_RETRY_DELAYS = (timedelta(hours=3), timedelta(hours=12),
+                        timedelta(hours=24))
+SUMMARY_RETRY_ERROR_LIMIT = 160
 
 
 def run_scrape(sources, previous=None, warm_limit=100, warm_min_score=SCORE_MID,
@@ -70,17 +77,28 @@ def run_scrape(sources, previous=None, warm_limit=100, warm_min_score=SCORE_MID,
     except D1Error as exc:
         _write_run_report(scraper, scraped, coverage, str(exc))
         raise
+    now = datetime.now(timezone.utc)
+    retries = load_summary_retries(previous.get('scraper_state'))
     warmed, attempted = warm_summaries(
         scraper, scraped, warm_limit, warm_min_score,
-        warm_budget_seconds, warm_workers)
+        warm_budget_seconds, warm_workers, retries=retries, now=now)
+    retries = prune_summary_retries(retries, scraped)
+    scraper_state = scraper.scraper_state_payload()
+    if retries:
+        # Rides in the private state document the next run already loads;
+        # load_scraper_state reads only `sources`, so older code ignores it.
+        scraper_state['summary_retries'] = retries
     result = {
         'version': 3,
         'generated_at': scraper.last_run,
         'articles': scraped,
         'health': list(scraper.health.values()),
-        'scraper_state': scraper.scraper_state_payload(),
+        'scraper_state': scraper_state,
         'run_stats': dict(scraper.run_stats),
-        'summary_warm': {'warmed': warmed, 'attempted': attempted},
+        'summary_warm': {
+            'warmed': warmed, 'attempted': attempted,
+            **summary_retry_counts(retries, now),
+        },
     }
     if (articles and len(scraped) < len(articles) / 2 and
             {row.get('name') for row in health} ==
@@ -107,12 +125,20 @@ def normalize_summaries(articles):
 
 
 def warm_summaries(scraper, articles, limit=100, min_score=SCORE_MID,
-                   budget_seconds=90, workers=8):
+                   budget_seconds=90, workers=8, retries=None, now=None):
+    """Fetch missing summaries, highest score first.
+
+    `retries` maps article id to its failed-fetch record and is updated in
+    place: a failure schedules the next try (SUMMARY_RETRY_DELAYS), a success
+    clears it, and an article still waiting is skipped. None disables this.
+    """
+    now = now or datetime.now(timezone.utc)
     targets = [article for article in articles
                if not article.get('summary')
                and not article.get('is_stale')
                and article.get('signal_score', 0) >= min_score
-               and _is_public_http_url(article.get('link') or '')]
+               and _is_public_http_url(article.get('link') or '')
+               and not _waiting_to_retry(retries, article.get('id'), now)]
     targets.sort(key=lambda article: article.get('signal_score', 0), reverse=True)
     targets = _round_robin_hosts(targets[:max(limit, 0)])
     if not targets:
@@ -131,7 +157,10 @@ def warm_summaries(scraper, articles, limit=100, min_score=SCORE_MID,
                 continue
             article, (summary, source, error) = result
             if source == 'metadata':
+                _record_summary_failure(retries, article.get('id'), error, now)
                 continue
+            if retries is not None:
+                retries.pop(article.get('id'), None)
             article['summary'] = summary
             article['summary_source'] = source
             article['summary_checked_at'] = datetime.now().isoformat()
@@ -141,6 +170,71 @@ def warm_summaries(scraper, articles, limit=100, min_score=SCORE_MID,
                 article.pop('summary_error', None)
             warmed += 1
     return warmed, len(targets)
+
+
+def load_summary_retries(scraper_state):
+    """Read retry records from the previous state, dropping malformed ones."""
+    raw = (scraper_state or {}).get('summary_retries') \
+        if isinstance(scraper_state, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    retries = {}
+    for article_id, entry in raw.items():
+        if (not isinstance(article_id, str) or not isinstance(entry, dict) or
+                not isinstance(entry.get('attempts'), int) or
+                entry['attempts'] < 1):
+            continue
+        next_attempt = entry.get('next_attempt_at')
+        if next_attempt is not None and parse_utc(next_attempt) is None:
+            continue
+        retries[article_id] = dict(entry)
+    return retries
+
+
+def prune_summary_retries(retries, articles):
+    """Keep records only for listed articles that still have no summary."""
+    pending = {article.get('id') for article in articles
+               if article.get('id') and not article.get('summary')}
+    return {article_id: entry for article_id, entry in retries.items()
+            if article_id in pending}
+
+
+def summary_retry_counts(retries, now):
+    waiting = given_up = 0
+    for entry in retries.values():
+        next_attempt = parse_utc(entry.get('next_attempt_at'))
+        if next_attempt is None:
+            given_up += 1
+        elif next_attempt > now:
+            waiting += 1
+    return {'retry_waiting': waiting, 'retry_given_up': given_up}
+
+
+def _waiting_to_retry(retries, article_id, now):
+    entry = (retries or {}).get(article_id)
+    if not entry:
+        return False
+    next_attempt = parse_utc(entry.get('next_attempt_at'))
+    return next_attempt is None or next_attempt > now
+
+
+def _record_summary_failure(retries, article_id, error, now):
+    if retries is None or not article_id:
+        return
+    attempts = (retries.get(article_id) or {}).get('attempts', 0) + 1
+    delay = (SUMMARY_RETRY_DELAYS[attempts - 1]
+             if attempts <= len(SUMMARY_RETRY_DELAYS) else None)
+    retries[article_id] = {
+        'attempts': attempts,
+        'last_attempt_at': _utc_text(now),
+        'last_error': str(error or 'No summary')[:SUMMARY_RETRY_ERROR_LIMIT],
+        # None means every try is used; the article is not fetched again.
+        'next_attempt_at': _utc_text(now + delay) if delay else None,
+    }
+
+
+def _utc_text(moment):
+    return moment.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 def prepare_publication(snapshot, sources, public_origin='https://high-signal.invalid'):
