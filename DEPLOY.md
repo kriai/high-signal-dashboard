@@ -13,7 +13,11 @@ in D1, and leaves scraping/source tests in GitHub Actions.
 The site is live at <https://high-signal-dashboard.krishayd.workers.dev>,
 backed by the `high-signal-preview` D1 database (the name predates the cutover;
 renaming a D1 database is not worth a migration). The scrape workflow publishes
-into it every 30 minutes, and the Worker's own cron refreshes the relay copies.
+into it hourly: the Worker's cron refreshes the relay copies on the hour and
+starts the scrape at :07 through `workflow_dispatch`. GitHub's own `:37`
+schedule is only a backup, because its timers are best-effort (the old
+every-30-minutes schedule ran four or five times a day); `scrape_job.py` skips
+when the hour already has a publication.
 There is one Worker and one environment: the earlier `-preview` Worker was
 retired at the cutover so the scheduled work does not run twice on the Free
 plan.
@@ -21,8 +25,10 @@ plan.
 The Worker needs three secrets, set with `npx wrangler secret put <NAME>`:
 `ADMIN_API_TOKEN` (the owner token typed into the Sources dialog),
 `FEED_RELAY_TOKEN` (must match the repository secret of the same name), and
-`GITHUB_ACTIONS_TOKEN` (optional: a token that can dispatch `source-tools.yml`;
-without it, Discover and Test report that dispatch is not configured). The
+`GITHUB_ACTIONS_TOKEN` (a token that can dispatch `scrape.yml` and
+`source-tools.yml`; without it, Discover and Test report that dispatch is not
+configured and scrapes fall back to GitHub's own best-effort schedule; the
+Worker logs a failed `scrape_dispatch` each hour until it is fixed). The
 repository variable `PUBLIC_ORIGIN` must name the live origin, because the
 scrape and source-tools workflows reach the relay through it.
 

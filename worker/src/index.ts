@@ -61,6 +61,14 @@ interface ToolJobRow {
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
+// Must match the `triggers.crons` entries in wrangler.jsonc. Relay copies are
+// refreshed on the hour so the scrape, started seven minutes later, reads
+// them fresh. GitHub's own timer only backs this up: its schedules are
+// best-effort and in practice ran a few times a day, not every slot.
+export const RELAY_CRON = '0 * * * *';
+export const SCRAPE_CRON = '7 * * * *';
+// The scrape publishes hourly; one late or skipped run is not yet stale.
+const STALE_AFTER_SECONDS = 2 * 3600;
 const ALLOWED_SORTS = new Set(['score', 'recent', 'mixed', 'source', 'category']);
 // Compatibility reads the publisher can prepare in full, so the Worker returns
 // stored text instead of parsing the dashboard document.
@@ -108,8 +116,9 @@ export default {
       if (url.pathname === '/api/health') {
         const summary = await activeSummary(env);
         const age = Math.max(0, (Date.now() - Date.parse(summary.generated_at)) / 1000);
-        return json({ status: age > 3600 ? 'degraded' : 'ok', storage_error: null,
-          articles: summary.count, age_seconds: age, stale: age > 3600,
+        const stale = age > STALE_AFTER_SECONDS;
+        return json({ status: stale ? 'degraded' : 'ok', storage_error: null,
+          articles: summary.count, age_seconds: age, stale,
           publication_id: summary.publication_id });
       }
       return await cachedRead(request, context, () => readRoute(request, env, url));
@@ -119,7 +128,15 @@ export default {
     }
   },
 
-  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    if (controller.cron === SCRAPE_CRON) {
+      const dispatch = await dispatchWorkflow(env, 'scrape.yml', {});
+      console.log(JSON.stringify({ scrape_dispatch: dispatch }));
+      // Throwing marks this cron run failed in Workers observability; the
+      // GitHub schedule still runs as the backup.
+      if (!dispatch.ok) throw new Error(dispatch.error);
+      return;
+    }
     console.log(JSON.stringify({ relay_refresh: await refreshRelayCopiesOffWorker(env) }));
   },
 };
@@ -576,9 +593,14 @@ async function retryToolJob(env: Env, id: string): Promise<Response> {
   return json({ id, state: 'queued', dispatched: dispatch.dispatched }, 202);
 }
 
-async function dispatchToolJob(env: Env, id: string): Promise<{
-  ok: boolean; dispatched: boolean; error: string;
-}> {
+function dispatchToolJob(env: Env, id: string): Promise<WorkflowDispatch> {
+  return dispatchWorkflow(env, 'source-tools.yml', { job_id: id });
+}
+
+interface WorkflowDispatch { ok: boolean; dispatched: boolean; error: string }
+
+async function dispatchWorkflow(env: Env, workflow: string,
+  inputs: Record<string, string>): Promise<WorkflowDispatch> {
   if (env.GITHUB_DISPATCH_DISABLED === '1') {
     return { ok: true, dispatched: false, error: '' };
   }
@@ -587,7 +609,7 @@ async function dispatchToolJob(env: Env, id: string): Promise<{
       error: 'GitHub Actions dispatch is not configured' };
   }
   const endpoint = `https://api.github.com/repos/${env.GITHUB_REPOSITORY}` +
-    '/actions/workflows/source-tools.yml/dispatches';
+    `/actions/workflows/${workflow}/dispatches`;
   let response: Response;
   try {
     response = await fetch(endpoint, {
@@ -599,7 +621,7 @@ async function dispatchToolJob(env: Env, id: string): Promise<{
         'user-agent': 'high-signal-worker',
         'x-github-api-version': '2022-11-28',
       },
-      body: JSON.stringify({ ref: env.GITHUB_WORKFLOW_REF || 'main', inputs: { job_id: id } }),
+      body: JSON.stringify({ ref: env.GITHUB_WORKFLOW_REF || 'main', inputs }),
     });
   } catch {
     return { ok: false, dispatched: false, error: 'GitHub dispatch network error' };

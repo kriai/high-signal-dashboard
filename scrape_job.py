@@ -22,6 +22,11 @@ os.environ['SCRAPE_JOB'] = '1'
 
 import store
 
+# One D1 publication per clock hour. The Worker starts the scrape at :07 and
+# GitHub's own timer at :37 is only a backup, so the backup finds this hour
+# already published and stops before scraping.
+PUBLISH_INTERVAL_SECONDS = 60 * 60
+
 
 def main():
     backend = store.backend_name()
@@ -86,6 +91,14 @@ def _run_legacy():
     return 0
 
 
+def published_this_slot(previous_time, now,
+                        interval=PUBLISH_INTERVAL_SECONDS):
+    if previous_time is None:
+        return False
+    return int(previous_time.timestamp() // interval) == \
+        int(now.timestamp() // interval)
+
+
 def _run_d1():
     from d1_store import D1Error, D1PublicationStore, D1RestClient
     from pipeline import (DOCUMENT_BUDGET_BYTES, prepare_publication,
@@ -103,21 +116,17 @@ def _run_d1():
             d1.load_document(publication_id=active),
             d1.load_document('scraper_state', publication_id=active))
 
-        # A workflow retry in the same slot should not create another
-        # generation. Scheduled runs use off-peak :07/:37 once the workflow is
-        # switched; compare wall-clock slots, not elapsed scrape duration.
-        # Only the same slot suppresses a run. Timestamps are naive local time,
-        # so a snapshot imported from a laptop ahead of UTC lands in a future
-        # slot on a UTC runner; treating that as "already published" would
-        # block CI until the clock caught up.
+        # A retry or the backup timer in the same hour should not create
+        # another generation; compare wall-clock slots, not elapsed scrape
+        # duration. Only the same slot suppresses a run. Timestamps are naive
+        # local time, so a snapshot imported from a laptop ahead of UTC lands
+        # in a future slot on a UTC runner; treating that as "already
+        # published" would block CI until the clock caught up.
+        from datetime import datetime
         previous_time = parse_iso((previous or {}).get('generated_at'))
-        if previous_time is not None:
-            from datetime import datetime
-            interval = 30 * 60
-            if int(previous_time.timestamp() // interval) == \
-                    int(datetime.now().timestamp() // interval):
-                print('⏭️  This half-hour already has an active publication; skipping')
-                return 0
+        if published_this_slot(previous_time, datetime.now()):
+            print('⏭️  This hour already has an active publication; skipping')
+            return 0
 
         sources = d1.load_sources()
         if not sources:

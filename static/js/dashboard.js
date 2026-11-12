@@ -1313,11 +1313,11 @@
     }
 
     if (state.status === 'ready' && state.lastSync &&
-        Date.now() - state.lastSync.getTime() > 3600000) {
+        Date.now() - state.lastSync.getTime() > 2 * 3600000) {
       list.push({
         tone: 'warn',
         label: shortAge(Date.now() - state.lastSync.getTime()) + ' stale',
-        text: 'These headlines are over an hour old. The scheduled scrape may not be running.',
+        text: 'These headlines are over two hours old. The hourly scrape may not be running.',
         action: {
           label: state.stats && state.stats.refresh_mode === 'check' ? 'Check updates' : 'Re-scrape',
           handler: refresh
