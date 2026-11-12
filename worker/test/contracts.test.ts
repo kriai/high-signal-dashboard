@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import worker, { canonicalCacheKey, derivedEtag, refreshRelayCopies, RelayRefresher, relayRoute,
-  sortArticles, validatePublicUrl, validateSource } from '../src/index.ts';
+  RELAY_CRON, SCRAPE_CRON, sortArticles, validatePublicUrl, validateSource } from '../src/index.ts';
 
 const articles = [
   { id: 'a', title: 'A', link: 'https://example.com/a', source: 'Beta',
@@ -376,5 +376,55 @@ describe('feed relay', () => {
     const reply = await ask('admin-secret');
     assert.equal(reply.status, 200);
     assert.deepEqual(await reply.json(), { refreshed: { [SUB]: 'saved HTTP 200' } });
+  });
+});
+
+describe('scheduled work', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+  const env = {
+    GITHUB_ACTIONS_TOKEN: 'gh-secret', GITHUB_REPOSITORY: 'owner/repo', GITHUB_WORKFLOW_REF: 'main',
+  } as unknown as Parameters<typeof worker.scheduled>[1];
+  const capture = (status: number) => {
+    const sent: { url: string; init: RequestInit }[] = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sent.push({ url: String(url), init });
+      return new Response(null, { status });
+    }) as typeof fetch;
+    return sent;
+  };
+  const tick = (cron: string, target = env) =>
+    worker.scheduled({ cron } as ScheduledController, target);
+
+  it('keeps the Worker timers in step with wrangler.jsonc', () => {
+    const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8')
+      .split('\n').filter((line) => !line.trim().startsWith('//')).join('\n'));
+    assert.deepEqual(config.triggers.crons, [RELAY_CRON, SCRAPE_CRON]);
+  });
+
+  it('starts the scrape workflow on the scrape timer and nothing else', async () => {
+    const sent = capture(204);
+    await tick(SCRAPE_CRON);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].url,
+      'https://api.github.com/repos/owner/repo/actions/workflows/scrape.yml/dispatches');
+    assert.equal((sent[0].init.headers as Record<string, string>).authorization, 'Bearer gh-secret');
+    assert.deepEqual(JSON.parse(String(sent[0].init.body)), { ref: 'main', inputs: {} });
+  });
+
+  it('fails the timer run when GitHub refuses, so the failure shows in the logs', async () => {
+    capture(401);
+    await assert.rejects(tick(SCRAPE_CRON), /HTTP 401/);
+  });
+
+  it('fails the timer run when dispatch is not configured', async () => {
+    capture(204);
+    await assert.rejects(tick(SCRAPE_CRON, {} as typeof env), /not configured/);
+  });
+
+  it('leaves dispatch off when local development disables it', async () => {
+    const sent = capture(204);
+    await tick(SCRAPE_CRON, { ...env, GITHUB_DISPATCH_DISABLED: '1' } as typeof env);
+    assert.equal(sent.length, 0);
   });
 });

@@ -1,12 +1,13 @@
 name: Scrape sources
 
-# Every 30 minutes, which the Vercel side cannot do for free: Hobby cron jobs
-# are capped at one run per day. Actions has no such limit and no 300s ceiling,
-# so this runs the full pass and writes it to the Blob store the app serves
-# from. `workflow_dispatch` makes the same job runnable by hand.
+# Hourly. The Worker's :07 cron starts this through `workflow_dispatch`,
+# because GitHub's schedules are best-effort: the old every-30-minutes timer
+# ran only four or five times a day. The :37 schedule below is a backup; when
+# the Worker's run already published this hour, scrape_job.py skips. The same
+# dispatch makes the job runnable by hand.
 on:
   schedule:
-    - cron: '7,37 * * * *'
+    - cron: '37 * * * *'
   workflow_dispatch:
     inputs:
       state_backend:
