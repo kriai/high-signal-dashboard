@@ -13,9 +13,9 @@ in D1, and leaves scraping/source tests in GitHub Actions.
 The site is live at <https://high-signal-dashboard.krishayd.workers.dev>,
 backed by the `high-signal-preview` D1 database (the name predates the cutover;
 renaming a D1 database is not worth a migration). The scrape workflow publishes
-into it hourly: the Worker's cron refreshes the relay copies on the hour and
-starts the scrape at :07 through `workflow_dispatch`. GitHub's own `:37`
-schedule is only a backup, because its timers are best-effort (the old
+into it hourly: the Worker's cron refreshes the relay copies at :25 UTC and
+starts the scrape at :30 UTC (the top of the hour in UTC+5:30) through
+`workflow_dispatch`. GitHub's own `:50` schedule is only a backup, because its timers are best-effort (the old
 every-30-minutes schedule ran four or five times a day); `scrape_job.py` skips
 when the hour already has a publication.
 There is one Worker and one environment: the earlier `-preview` Worker was
@@ -293,7 +293,7 @@ python scripts/audit_sources.py --d1 --source "The Information"
   refuses the Worker while it is answering a request *from Actions* (the
   caller's network evidently carries through to the Worker's own fetch), yet it
   answers the same Worker running on its own schedule, from US and other
-  regions alike. So a Cron Trigger (`*/30 * * * *`) saves the feeds of sources
+  regions alike. So a Cron Trigger (`25 * * * *`) saves the feeds of sources
   marked `"relay": true` into D1's `relay_copies` table, and
   `/api/relay/feed` serves the saved copy. Nothing Actions asks for is fetched
   live. Health shows `transport: relay`.

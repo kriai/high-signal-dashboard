@@ -22,9 +22,9 @@ os.environ['SCRAPE_JOB'] = '1'
 
 import store
 
-# One D1 publication per clock hour. The Worker starts the scrape at :07 and
-# GitHub's own timer at :37 is only a backup, so the backup finds this hour
-# already published and stops before scraping.
+# One D1 publication per UTC hour. The Worker starts the scrape at :30 UTC and
+# GitHub's own timer at :50 is only a backup in the same UTC hour, so the
+# backup finds the hour already published and stops before scraping.
 PUBLISH_INTERVAL_SECONDS = 60 * 60
 
 

@@ -61,12 +61,13 @@ interface ToolJobRow {
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
-// Must match the `triggers.crons` entries in wrangler.jsonc. Relay copies are
-// refreshed on the hour so the scrape, started seven minutes later, reads
-// them fresh. GitHub's own timer only backs this up: its schedules are
-// best-effort and in practice ran a few times a day, not every slot.
-export const RELAY_CRON = '0 * * * *';
-export const SCRAPE_CRON = '7 * * * *';
+// Must match the `triggers.crons` entries in wrangler.jsonc. Cron is UTC; :30
+// UTC is the top of the hour in UTC+5:30, where the owner reads. Relay copies
+// are refreshed five minutes earlier so the scrape reads them fresh. GitHub's
+// own timer only backs this up: its schedules are best-effort and in practice
+// ran a few times a day, not every slot.
+export const RELAY_CRON = '25 * * * *';
+export const SCRAPE_CRON = '30 * * * *';
 // The scrape publishes hourly; one late or skipped run is not yet stale.
 const STALE_AFTER_SECONDS = 2 * 3600;
 const ALLOWED_SORTS = new Set(['score', 'recent', 'mixed', 'source', 'category']);
