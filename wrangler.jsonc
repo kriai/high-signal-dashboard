@@ -24,11 +24,12 @@
     "GITHUB_REPOSITORY": "kriai/high-signal-dashboard",
     "GITHUB_WORKFLOW_REF": "main"
   },
-  // On the hour: save relay-enabled feeds into D1 for /api/relay/feed to
-  // serve. At :07: start the scrape workflow on GitHub. Keep these in step
-  // with RELAY_CRON and SCRAPE_CRON in worker/src/index.ts.
+  // UTC. At :25: save relay-enabled feeds into D1 for /api/relay/feed to
+  // serve. At :30 (the top of the hour in UTC+5:30): start the scrape
+  // workflow on GitHub. Keep these in step with RELAY_CRON and SCRAPE_CRON in
+  // worker/src/index.ts.
   "triggers": {
-    "crons": ["0 * * * *", "7 * * * *"]
+    "crons": ["25 * * * *", "30 * * * *"]
   },
   // The refresh runs in this object, which gets 30 s of CPU rather than a
   // Free plan Worker's 10 ms.
